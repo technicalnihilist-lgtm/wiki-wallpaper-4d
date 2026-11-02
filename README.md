@@ -28,6 +28,10 @@ because most of Commons is CC BY / CC BY-SA and **attribution is required**.
 The Android app is a thin WebView shell around the exact same HTML, so web and APK
 always behave identically.
 
+## Store listing
+
+Ready-to-paste listing copy, icon URL and screenshot URLs for app stores: [`STORE.md`](STORE.md)
+
 ## Screenshots
 
 | Mobile feed | Fullscreen viewer | Credits |
