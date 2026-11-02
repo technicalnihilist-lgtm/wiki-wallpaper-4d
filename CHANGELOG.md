@@ -3,6 +3,17 @@
 Every change below keeps the UI, layout, wording and features exactly as they are.
 Only correctness, stability and speed change.
 
+## v4.8.0 — 2026-11-02
+**120 Hz support**
+- The Android shell now asks the window to run at the panel's fastest refresh rate instead of the
+  platform's 60 Hz default: `LayoutParams.preferredRefreshRate` is set to the highest rate the display
+  reports (90 / 120 / 144 Hz panels all differ), and on Android 11+ `Window.setFrameRate(hz,
+  FRAME_RATE_COMPATIBILITY_DEFAULT)` is called reflectively so the system keeps the high rate.
+- Re-applied in `onResume()` because some OEM builds reset the window frame rate when the activity returns.
+- No visual change: same UI, same animations — they simply get 120 samples per second instead of 60.
+- The web build already follows the display (requestAnimationFrame is driven by the compositor), so no
+  page-side change was needed.
+
 ## v4.7.0 — 2026-11-02
 **Glass restored + measured performance work**
 - Removed the phone blur cap — full 22px liquid glass, refraction, glare and shine are back on touch devices
