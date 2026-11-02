@@ -4,10 +4,11 @@
 
 # Wiki Wallpapers 4D
 
-**2,322 free wallpapers from Wikimedia Commons — liquid-glass UI, 4D depth, live updates, and full credits for every single image.**
+**2,322 free wallpapers from Wikimedia Commons — liquid-glass UI, 4D depth, live updates, full credits, and a 9-language interface.**
 
 [![Web](https://img.shields.io/badge/web-open%20index.html-4c82ff)](#-run-it)
-[![Android](https://img.shields.io/badge/android-APK%20v4.0.0-3ddc84)](../../releases/latest)
+[![Android](https://img.shields.io/badge/android-APK%20v4.5.0-3ddc84)](../../releases/latest)
+[![Languages](https://img.shields.io/badge/languages-9-ff7ac0)](#-languages)
 [![License](https://img.shields.io/badge/code-MIT-blue)](LICENSE)
 [![Images](https://img.shields.io/badge/images-CC%20BY--SA%20%2F%20PD-orange)](CREDITS.md)
 
@@ -33,9 +34,25 @@ always behave identically.
 |---|---|---|
 | <img src="screenshots/02-mobile-feed.jpg" width="240"> | <img src="screenshots/03-fullscreen-viewer.jpg" width="240"> | <img src="screenshots/04-credits.jpg" width="240"> |
 
-| 4D depth settings | Light theme |
-|---|---|
-| <img src="screenshots/05-settings-4d.jpg" width="240"> | <img src="screenshots/06-light-theme.jpg" width="620"> |
+| Language picker | 4D depth settings | Light theme |
+|---|---|---|
+| <img src="screenshots/07-languages.jpg" width="240"> | <img src="screenshots/05-settings-4d.jpg" width="240"> | <img src="screenshots/06-light-theme.jpg" width="240"> |
+
+## Languages
+
+Settings → **Language** opens a searchable A–Z picker:
+
+| | | |
+|---|---|---|
+| English | ગુજરાતી · Gujarati | हिन्दी · Hindi |
+| ಕನ್ನಡ · Kannada | മലയാളം · Malayalam | मराठी · Marathi |
+| ਪੰਜਾਬੀ · Punjabi | தமிழ் · Tamil | తెలుగు · Telugu |
+
+Switching a language translates **every piece of UI text** — search placeholder, all 61
+category chips, the status line, every toast, the image window, the credits sheet, the
+whole settings panel and the fullscreen viewer — while **the wallpapers stay exactly the
+same**: same photos, same titles, same photographers, same order. The choice is stored in
+`localStorage` and restored on the next launch.
 
 ## Features
 
@@ -45,21 +62,26 @@ card, parallax backdrop, and optional gyroscope depth on phones. Every knob — 
 transparency, saturation, corner radius, shine, tilt depth, animation curve and speed —
 is live-tweakable from the settings popover and saved to `localStorage`.
 
+**4D app icon**
+The launcher icon is a real extruded tile — 26 stacked layers forming the side walls, a
+glossy gradient face, a floating photo card behind the glyph and a ground shadow. Inside
+the app the same icon tilts in 3D with your pointer (or the gyroscope) with a moving
+specular highlight.
+
 **2,322 wallpapers, instantly**
 The whole curated library is embedded in the HTML, so the feed opens with zero network
 and zero layout shift. 61 categories, mixed portrait/landscape masonry, lazy loading,
-infinite scroll.
+infinite scroll — with a throttled scroll listener and an explicit
+**“N more wallpapers ↓”** button so the feed can never silently stall.
 
 **Live from Commons**
 - 🔄 **Pull down to refresh** — newest featured pictures are fetched and prepended with a `NEW` badge
-- 🆕 **"Naye" chip** — the latest uploads from `Category:Featured pictures on Wikimedia Commons`, newest first
-- ⏱️ **Auto-update** — checks every 2.5 minutes and offers a "N naye wallpapers" pill
+- 🆕 **"New" chip** — the latest uploads from `Category:Featured pictures on Wikimedia Commons`, newest first
+- ⏱️ **Auto-update** — checks every 2.5 minutes and offers a bottom snackbar with the new count
 - 🌐 **Live search merged in** — any keyword also queries Commons directly
 - ● **Live / ○ Offline** indicator, plus a full offline fallback on the embedded library
-
-**4D app icon**
-The launcher icon is a real 4D tile — an extruded depth slab under a glass face with a
-specular highlight and a drop shadow — and the same icon sits next to the title inside the app.
+- Requests are throttled with exponential back-off and a 429 cool-down, so rapid category
+  switching never gets rate-limited
 
 **Fullscreen**
 Edge-to-edge viewer with `Fit` / `Fill`, `‹ ›` arrows, `←` `→` keys, swipe navigation,
@@ -72,10 +94,11 @@ a credit strip that stays visible, and `Esc` to exit. The whole app also has an
 - A searchable credits sheet (by photographer, license or title) with **Copy all** and **Credits .txt**
 - [`CREDITS.md`](CREDITS.md) — all 2,322 images, one row each
 
-**No accidental copying**
-Text selection, long-press callouts, image dragging and the context menu are disabled
-everywhere except input fields and links — so holding a card never opens a copy popup.
-The "Copy credit" buttons still work.
+**Made for phones**
+Responsive `srcset` thumbnails (250px on phones instead of 500px), `preconnect` to the
+Wikimedia CDN, and a **Performance mode** that lightens blur and effects on low-RAM
+devices. Text selection, long-press callouts and the context menu are disabled everywhere
+except inputs and links — so holding a card never opens a copy popup.
 
 ## Run it
 
@@ -87,9 +110,9 @@ and install it (you'll need to allow "install unknown apps" for your browser/fil
 | | |
 |---|---|
 | Package | `net.wikiwallpapers.app` |
-| Version | 4.4.0 (versionCode 8) |
+| Version | 4.5.0 (versionCode 9) |
 | Min / Target SDK | 24 (Android 7) / 34 |
-| Size | ~480 KB |
+| Size | ~520 KB |
 | Permissions | Internet, network state, set wallpaper |
 
 ## Build the APK
@@ -114,7 +137,7 @@ can be installed as an update over this one. Replace it with your own key for a 
 ## Project layout
 
 ```
-index.html                  the whole app (UI + data + logic, single file)
+index.html                  the whole app (UI + data + i18n + logic, single file)
 screenshots/                README images
 CREDITS.md                  per-image attribution for all 2,322 wallpapers
 android/
@@ -132,6 +155,9 @@ The embedded library stores, per image: `i` id, `t` title, `a` artist, `l` licen
 `c` category. Live results are fetched from the Commons API
 (`action=query`, `prop=imageinfo`, `iiprop=url|size|mime|extmetadata`) and normalised into
 the same shape, so the UI never cares where an image came from.
+
+The interface strings live in one `I18N` table (131 keys × 9 languages) and are read
+through a small `t()` helper, so adding a language means adding one dictionary.
 
 ## Credits & license
 
