@@ -748,7 +748,9 @@ function infoOf(p){
 let IMG_MAX=6, IMG_GAP=45;
 let imgActive=0,imgCooldown=0,imgFailStreak=0,imgOkStreak=0,imgTimer=0,imgLastStart=0;
 const imgQ=[];
+const imgLive=new Set(); /* images currently counted in imgActive */
 function enqueueImg(img){imgQ.push(img);pumpImgs()}
+function releaseImg(img){if(imgLive.delete(img))imgActive=Math.max(0,imgActive-1)}
 function pumpImgs(){
   if(imgTimer)return;
   const now=Date.now();
@@ -765,7 +767,7 @@ function pumpImgs(){
     const img=imgQ.shift();
     if(!img.isConnected)continue;
     const attempt=+(img.dataset.attempt||0);
-    imgActive++;imgLastStart=Date.now();
+    imgActive++;imgLive.add(img);imgLastStart=Date.now();
     img.src=(attempt%2===1)?(img.dataset.small||img.dataset.full):img.dataset.full;
     return; /* one start per tick keeps the gap honest */
   }
@@ -782,6 +784,13 @@ function retryImg(img,face){
 
 /* ================= grid ================= */
 const grid=$('grid');
+/* Replacing the grid aborts in-flight image loads without firing load/error,
+   so their loader slots must be released by hand or the loader stalls forever. */
+function clearGrid(){
+  grid.replaceChildren();
+  if(imgQ.length)for(let i=imgQ.length-1;i>=0;i--)if(!imgQ[i].isConnected)imgQ.splice(i,1);
+  if(imgLive.size)for(const im of imgLive)if(!im.isConnected)releaseImg(im);
+}
 let revealN=0,revealT=0;
 const io=('IntersectionObserver' in window)?new IntersectionObserver(es=>{
   es.forEach(en=>{if(en.isIntersecting){io.unobserve(en.target);reveal(en.target)}});
@@ -801,10 +810,10 @@ function makeCell(d){
   const face=el('div',{class:'face'}),img=el('img',{alt:d.title,decoding:'async',loading:'lazy'});
   img.dataset.full=d.thumb;
   img.dataset.small=resize(d.thumb,250);
-  img.onload=()=>{imgActive=Math.max(0,imgActive-1);imgFailStreak=0;
+  img.onload=()=>{releaseImg(img);imgFailStreak=0;
     if(IMG_MAX<6&&++imgOkStreak>12){imgOkStreak=0;IMG_MAX=Math.min(6,IMG_MAX+1);IMG_GAP=Math.max(45,IMG_GAP-40)}
     face.classList.add('loaded');face.classList.remove('failed');pumpImgs()};
-  img.onerror=()=>{imgActive=Math.max(0,imgActive-1);retryImg(img,face);pumpImgs()};
+  img.onerror=()=>{releaseImg(img);retryImg(img,face);pumpImgs()};
   face.append(img,el('div',{class:'glare'}));
   card.append(face,el('div',{class:'cap'},
     el('span',{class:'ct'},d.title),
@@ -859,6 +868,9 @@ function showStatus(kind,msg){
 let metaSig='';
 function updateMeta(){
   const on=!!(S.live&&navigator.onLine);
+  const sig=[pool.length,on,mode,term,lastSync?Math.floor((Date.now()-lastSync)/60000):'x'].join('|');
+  if(sig===metaSig)return;
+  metaSig=sig;
   const ago=lastSync?Math.max(0,Math.round((Date.now()-lastSync)/60000)):null;
   const label=mode==='fresh'?t('src_fresh')
     :(term?t('src_search',{q:term}):t('src_note'));
@@ -871,25 +883,24 @@ function updateMeta(){
     ago!=null&&on?el('span',{class:'dot'},'·'):null,
     ago!=null&&on?el('span',{},ago<1?t('synced_now'):t('synced_ago',{n:ago})):null,
     el('button',{class:'cbtn press',type:'button',style:'flex:none;padding:7px 14px;font-size:12px;margin-left:auto',on:{click:()=>openCredits()}},t('credits'))];
-  const sig=[pool.length,on,mode,term,lastSync?Math.floor((Date.now()-lastSync)/60000):'x'].join('|');
-  if(sig===metaSig)return;
-  metaSig=sig;
   $('meta').replaceChildren(...bits.filter(Boolean));
+}
+const HAY=new WeakMap();
+function hayOf(d){
+  let h=HAY.get(d);
+  if(h===undefined){h=(d.title+' '+d.artist+' '+d.cat+' '+d.desc+' '+d.license).toLowerCase();HAY.set(d,h)}
+  return h;
 }
 function buildPool(){
   const words=(term||'').trim().toLowerCase().split(/\s+/).filter(Boolean);
   const min=S.minres;
   pool=[];
-  for(const raw of WALLS){
-    const d=norm(raw);
+  for(const d of allNorm()){
     const long=Math.max(d.w,d.h),short=Math.min(d.w,d.h);
     if(long<min||short<min*.55)continue;
     if(S.orient==='portrait'&&d.h<d.w*1.05)continue;
     if(S.orient==='landscape'&&d.w<d.h*1.05)continue;
-    if(words.length){
-      const hay=(d.title+' '+d.artist+' '+d.cat+' '+d.desc+' '+d.license).toLowerCase();
-      if(!words.every(w=>hay.includes(w)))continue;
-    }
+    if(words.length&&!words.every(w=>hayOf(d).includes(w)))continue;
     pool.push(d);seen.add(d.id);seenT.add(d.title.toLowerCase());
   }
 }
@@ -983,7 +994,7 @@ function start(t){
   pos=0;liveOffset=0;liveDone=false;loading=false;seen=new Set();revealN=0;pool=[];
   freshCont=null;pendingFresh=[];if(typeof hideNewPill==='function')hideNewPill();
   if(io)io.disconnect();
-  grid.replaceChildren();actCard=null;
+  clearGrid();actCard=null;
   scrollTo(0,0);
   if(mode==='fresh'){
     showStatus('');
@@ -1105,7 +1116,7 @@ addEventListener('scroll',()=>{
 
 /* ================= window (macOS style) ================= */
 const win=$('win'),overlay=$('overlay'),dim=$('dim'),pw=$('pwrap'),pimg=$('pimg'),photo=$('photo');
-let isOpen=false,opening=false,closing=false,curData=null,curCell=null;
+let isOpen=false,opening=false,closing=false,curData=null,curCell=null,hiddenCell=null;
 
 function fitPhoto(){
   if(!curData)return;
@@ -1198,7 +1209,7 @@ async function openModal(d,cell){
   dim.style.display='block';overlay.style.display='flex';overlay.classList.remove('max');
   moveLens(tabsBox,true);fitPhoto();setBg(d.thumb);
   const sr=win.getBoundingClientRect(),cr=cell.getBoundingClientRect(),g=geom(cr,sr),st=S.anim;
-  cell.style.visibility='hidden';
+  cell.style.visibility='hidden';hiddenCell=cell;
   cancelAnims();
   const ps=[];
   ps.push(play(dim,[{opacity:0},{opacity:1}],{duration:D(380),easing:'ease-out',fill:'backwards'}));
@@ -1232,8 +1243,9 @@ async function closeModal(force){
   cancelAnims();
   overlay.style.display='none';dim.style.display='none';overlay.classList.remove('max');
   root.classList.remove('lock');
-  if(curCell){curCell.style.visibility='';
-    const c=curCell.firstElementChild;
+  const hc=hiddenCell||curCell;hiddenCell=null;
+  if(hc){hc.style.visibility='';
+    const c=hc.firstElementChild;
     if(c&&S.anim!=='off'){c.style.setProperty('--s','.9');requestAnimationFrame(()=>requestAnimationFrame(()=>c.style.removeProperty('--s')))}}
   isOpen=closing=false;curData=curCell=null;pimg.removeAttribute('src');
 }
@@ -1563,7 +1575,7 @@ async function refreshFeed(){
     const add=items.filter(d=>!seen.has(d.id));
     add.forEach(d=>{d.fresh=true;seen.add(d.id)});
     if(add.length){
-      pool.unshift(...add);pos=0;grid.replaceChildren();
+      pool.unshift(...add);pos=0;clearGrid();
       renderChunk(Math.min(pool.length,Math.max(30,add.length+10)));
       scrollTo({top:0,behavior:'smooth'});
       toast(t('t_fresh',{n:add.length}));
@@ -1585,7 +1597,7 @@ function applyFresh(){
   const add=pendingFresh.slice();pendingFresh=[];hideNewPill();
   if(!add.length)return;
   add.forEach(d=>{d.fresh=true;seen.add(d.id)});
-  pool.unshift(...add);pos=0;grid.replaceChildren();renderChunk(30);
+  pool.unshift(...add);pos=0;clearGrid();renderChunk(30);
   scrollTo({top:0,behavior:'smooth'});
   toast(t('t_fresh',{n:add.length}));
   lastSync=Date.now();updateMeta();
@@ -1744,7 +1756,6 @@ document.addEventListener('selectstart',e=>{if(!selOk(e.target))e.preventDefault
 document.addEventListener('contextmenu',e=>{if(!selOk(e.target))e.preventDefault()},true);
 document.addEventListener('dragstart',e=>{if(e.target&&e.target.tagName==='IMG')e.preventDefault()},true);
 
-setInterval(()=>{grid.querySelectorAll('.cell:not(.in)').forEach(c=>c.classList.add('in'))},1200);
 /* ================= 4D icon ================= */
 const lw=document.querySelector('.logowrap');
 if(lw){
