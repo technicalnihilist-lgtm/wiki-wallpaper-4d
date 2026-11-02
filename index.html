@@ -314,6 +314,12 @@ input,textarea,select,[contenteditable="true"]{-webkit-user-select:text!importan
   box-shadow:0 10px 20px -4px rgba(76,130,255,.7),0 3px 6px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.6)}
 #title:active .applogo{transform:scale(.94)}
 @media(max-width:420px){.applogo{width:24px;height:24px;border-radius:7px;vertical-align:-5px;margin-right:6px}}
+
+/* ---------- resilience ---------- */
+.cell{opacity:1}
+.cell:not(.in){opacity:1}
+.face.failed{animation:none;background:linear-gradient(135deg,rgba(var(--ink-rgb),.10),rgba(var(--ink-rgb),.04))}
+.face.failed::before{content:"🖼️";position:absolute;inset:0;display:grid;place-items:center;font-size:22px;opacity:.35}
 </style>
 </head>
 <body>
@@ -505,7 +511,9 @@ function play(node,kf,opts){
 const cancelAnims=()=>{anims.forEach(a=>{try{a.cancel()}catch(e){}});anims=[]};
 function playLocal(node,kf,opts){
   if(S.anim==='off'||!node.animate)return Promise.resolve();
-  return node.animate(kf,opts).finished.catch(()=>{});
+  const a=node.animate(kf,opts);
+  const dur=(opts&&opts.duration)||0,delay=(opts&&opts.delay)||0;
+  return Promise.race([a.finished.catch(()=>{}),new Promise(r=>setTimeout(r,dur+delay+600))]);
 }
 
 /* ================= toast ================= */
@@ -601,16 +609,32 @@ let ALLNORM=null;
 const allNorm=()=>ALLNORM||(ALLNORM=WALLS.map(norm));
 
 /* ---- live Commons fallback: jab embedded list khatam ho jaye ---- */
+let lastApiAt=0,apiFails=0,apiCooldown=0;
 async function api(params,signal){
+  const now=Date.now();
+  if(now<apiCooldown)throw new Error('cooldown');
+  const gap=Math.max(0,lastApiAt+900-now);
+  if(gap)await sleep(gap);
+  lastApiAt=Date.now();
   const u=API+'?'+new URLSearchParams({format:'json',formatversion:'2',origin:'*',...params});
   for(let i=0;i<3;i++){
     try{
       const r=await fetch(u,{signal});
-      if(r.status===429||r.status>=500){await sleep(700*(i+1));continue}
+      if(r.status===429||r.status>=500){
+        if(r.status===429)apiCooldown=Date.now()+12000;
+        await sleep(900*(i+1));continue;
+      }
       if(!r.ok)throw new Error('HTTP '+r.status);
-      return await r.json();
-    }catch(e){if(e.name==='AbortError'||i===2)throw e;await sleep(500)}
+      const j=await r.json();
+      apiFails=0;apiCooldown=0;
+      return j;
+    }catch(e){
+      if(e.name==='AbortError'||i===2)throw e;
+      await sleep(600);
+    }
   }
+  apiFails++;
+  apiCooldown=Date.now()+Math.min(90000,5000*apiFails);
   throw new Error('Network error');
 }
 async function fetchPage(q,off,signal){
@@ -649,8 +673,10 @@ const io=('IntersectionObserver' in window)?new IntersectionObserver(es=>{
   es.forEach(en=>{if(en.isIntersecting){io.unobserve(en.target);reveal(en.target)}});
 },{rootMargin:'0px 0px -4% 0px'}):null;
 function reveal(cell){
-  const i=revealN++;clearTimeout(revealT);revealT=setTimeout(()=>{revealN=0},140);
   cell.classList.add('in');
+  if(cell.dataset.rev)return;
+  cell.dataset.rev='1';
+  const i=revealN++;clearTimeout(revealT);revealT=setTimeout(()=>{revealN=0},140);
   playLocal(cell,[{transform:'translateY(48px) scale(.86) rotateX(-14deg)',opacity:0},{transform:'none',opacity:1}],
     {duration:D(850),delay:Math.min(i,11)*D(45),easing:springCSS(),fill:'backwards'});
 }
@@ -659,8 +685,13 @@ function makeCell(d){
   cell.style.aspectRatio=clamp(d.w/d.h,0.62,1.5).toFixed(3);
   const card=el('div',{class:'card',tabindex:'0',role:'button','aria-label':d.title+' — '+creditShort(d)});
   const face=el('div',{class:'face'}),img=el('img',{alt:d.title,decoding:'async',loading:'lazy'});
-  img.onload=()=>face.classList.add('loaded');
-  img.onerror=()=>cell.remove();
+  img.onload=()=>{face.classList.add('loaded');face.classList.remove('failed')};
+  img.onerror=()=>{
+    if(!img.dataset.retried){
+      img.dataset.retried='1';
+      setTimeout(()=>{img.src=resize(d.thumb,250)},1200);
+    }else face.classList.add('failed');
+  };
   img.src=d.thumb;
   face.append(img,el('div',{class:'glare'}));
   card.append(face,el('div',{class:'cap'},
@@ -671,8 +702,9 @@ function makeCell(d){
   card.addEventListener('click',()=>openModal(d,cell));
   card.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openModal(d,cell)}});
   card.addEventListener('pointerenter',e=>{if(e.pointerType==='mouse')setBg(d.thumb)});
+  cell.classList.add('in');
   grid.append(cell);
-  if(io)io.observe(cell);else cell.classList.add('in');
+  if(io)io.observe(cell);else reveal(cell);
 }
 /* 3D tilt (event delegation, no per-card listeners) */
 let actCard=null,tiltRaf=0,tiltPos=null;
@@ -697,17 +729,21 @@ function applyTilt(){
 }
 
 /* ================= feed ================= */
-let term='',pool=[],pos=0,liveOffset=0,liveDone=false,loading=false,token=0,seen=new Set(),ctrl=null,
+let term='',pool=[],pos=0,liveOffset=0,liveDone=false,loading=false,token=0,seen=new Set(),seenT=new Set(),ctrl=null,
     mode='search',freshCont=null,pendingFresh=[],lastSync=0,refreshing=false;
 
+let statusSig='';
 function showStatus(kind,msg){
+  const sig=(kind||'')+'|'+(msg||'');
+  if(sig===statusSig)return;
+  statusSig=sig;
   const s=$('status');s.replaceChildren();
   if(kind==='loading')s.append(el('div',{class:'pill glass'},el('i',{class:'spin'}),'Wikimedia se aur wallpapers aa rahe hain…'));
   else if(kind==='empty')s.append(el('div',{class:'pill glass'},'😕 Kuch nahi mila — doosra keyword ya filter try karo'));
   else if(kind==='end')s.append(el('div',{class:'pill glass'},'✨ Bas itna hi! Doosri category ya search try karo'));
-  else if(kind==='error')s.append(el('button',{class:'pill glass press',type:'button',on:{click:()=>more()}},'⚠️ '+(msg||'Error')+' — tap to retry'));
-  else s.replaceChildren();
+  else if(kind==='error')s.append(el('button',{class:'pill glass press',type:'button',on:{click:()=>{statusSig='';more()}}},'⚠️ '+(msg||'Error')+' — tap to retry'));
 }
+let metaSig='';
 function updateMeta(){
   const on=!!(S.live&&navigator.onLine);
   const ago=lastSync?Math.max(0,Math.round((Date.now()-lastSync)/60000)):null;
@@ -722,6 +758,9 @@ function updateMeta(){
     ago!=null&&on?el('span',{class:'dot'},'·'):null,
     ago!=null&&on?el('span',{},ago<1?'abhi sync hua':ago+' min pehle sync'):null,
     el('button',{class:'cbtn press',type:'button',style:'flex:none;padding:7px 14px;font-size:12px;margin-left:auto',on:{click:()=>openCredits()}},'📜 Credits')];
+  const sig=[pool.length,on,mode,term,lastSync?Math.floor((Date.now()-lastSync)/60000):'x'].join('|');
+  if(sig===metaSig)return;
+  metaSig=sig;
   $('meta').replaceChildren(...bits.filter(Boolean));
 }
 function buildPool(){
@@ -738,7 +777,7 @@ function buildPool(){
       const hay=(d.title+' '+d.artist+' '+d.cat+' '+d.desc+' '+d.license).toLowerCase();
       if(!words.every(w=>hay.includes(w)))continue;
     }
-    pool.push(d);seen.add(d.id);
+    pool.push(d);seen.add(d.id);seenT.add(d.title.toLowerCase());
   }
 }
 function renderChunk(n){
@@ -758,7 +797,10 @@ async function loadLive(){
       if(!pages.length){liveDone=true;break}
       for(const p of pages){
         if(!accept(p))continue;
-        const o=infoOf(p);seen.add(o.id);pool.push(o);added++;
+        const o=infoOf(p);
+        const k=o.title.toLowerCase();
+        if(seenT.has(k))continue;
+        seenT.add(k);seen.add(o.id);pool.push(o);added++;
       }
       if(next==null)liveDone=true;else liveOffset=next;
     }
@@ -767,7 +809,9 @@ async function loadLive(){
     showStatus('');
   }catch(e){
     if(my!==token||e.name==='AbortError')return;
-    liveDone=true;showStatus('error','Wikimedia se aur nahi aa paye');
+    liveDone=true;
+    if(!pool.length)showStatus('error','Wikimedia se connect nahi hua');
+    else showStatus('end');
   }finally{
     if(my===token){loading=false;updateMeta();setTimeout(checkSentinel,80)}
   }
@@ -931,7 +975,7 @@ function frames(st,g,open){
 }
 
 async function openModal(d,cell){
-  if(isOpen||closing)return;
+  if(isOpen||closing||opening)return;
   isOpen=opening=true;curData=d;curCell=cell;
   fillModal(d);
   root.classList.add('lock');
@@ -955,6 +999,7 @@ async function closeModal(force){
   if(!isOpen||closing)return;
   if(fsMode){fsMode=false;overlay.classList.remove('fs');try{if(document.fullscreenElement)document.exitFullscreen()}catch(e){}}
   closing=true;cancelAnims();opening=false;
+  if(!isOpen)return;
   let st=S.anim;if(st!=='off'&&force)st=force;
   const sr=win.getBoundingClientRect();
   let cr=curCell&&curCell.isConnected?curCell.getBoundingClientRect():null;
@@ -1264,7 +1309,7 @@ async function loadFreshPage(){
     const items=await fetchFresh(40);
     if(my!==token)return;
     if(!pool.length)cacheFresh(items);
-    const add=items.filter(d=>!seen.has(d.id));
+    const add=items.filter(d=>{const k=d.title.toLowerCase();if(seenT.has(k))return false;seenT.add(k);return true});
     add.forEach(d=>seen.add(d.id));
     pool.push(...add);
     renderChunk(pool.length);
@@ -1319,6 +1364,7 @@ newPill.addEventListener('click',applyFresh);
 
 async function checkFresh(){
   if(!S.live||!navigator.onLine||refreshing||isOpen||mode==='fresh'||loading)return;
+  if(document.hidden||Date.now()<apiCooldown)return;
   try{
     const items=await fetchFresh(24);
     const add=items.filter(d=>!seen.has(d.id));
@@ -1336,7 +1382,7 @@ refreshBtn.addEventListener('click',()=>refreshFeed());
 /* ---- pull to refresh ---- */
 let pullY=0,pulling=false,pullStart=0;
 addEventListener('touchstart',e=>{
-  if(scrollY>2||e.touches.length!==1||refreshing)return;
+  if(scrollY>2||e.touches.length!==1||refreshing||isOpen||popOpen||credOpen)return;
   pullStart=e.touches[0].clientY;pulling=true;pullY=0;
   const hb=$('hwrap').getBoundingClientRect().bottom;
   pullEl.style.top=Math.round(Math.max(10,hb+10))+'px';
@@ -1468,6 +1514,7 @@ document.addEventListener('selectstart',e=>{if(!selOk(e.target))e.preventDefault
 document.addEventListener('contextmenu',e=>{if(!selOk(e.target))e.preventDefault()},true);
 document.addEventListener('dragstart',e=>{if(e.target&&e.target.tagName==='IMG')e.preventDefault()},true);
 
+setInterval(()=>{grid.querySelectorAll('.cell:not(.in)').forEach(c=>c.classList.add('in'))},1200);
 /* ================= boot ================= */
 if(S.gyro){if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function')S.gyro=false;else enableGyro(true)}
 apply();buildPop();
