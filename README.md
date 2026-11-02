@@ -7,7 +7,7 @@
 **2,322 free wallpapers from Wikimedia Commons — liquid-glass UI, 4D depth, live updates, full credits, and a 9-language interface.**
 
 [![Web](https://img.shields.io/badge/web-open%20index.html-4c82ff)](#-run-it)
-[![Android](https://img.shields.io/badge/android-APK%20v4.5.0-3ddc84)](../../releases/latest)
+[![Android](https://img.shields.io/badge/android-APK%20v4.6.0-3ddc84)](../../releases/latest)
 [![Languages](https://img.shields.io/badge/languages-9-ff7ac0)](#-languages)
 [![License](https://img.shields.io/badge/code-MIT-blue)](LICENSE)
 [![Images](https://img.shields.io/badge/images-CC%20BY--SA%20%2F%20PD-orange)](CREDITS.md)
@@ -95,9 +95,11 @@ a credit strip that stays visible, and `Esc` to exit. The whole app also has an
 - [`CREDITS.md`](CREDITS.md) — all 2,322 images, one row each
 
 **Made for phones**
-Responsive `srcset` thumbnails (250px on phones instead of 500px), `preconnect` to the
-Wikimedia CDN, and a **Performance mode** that lightens blur and effects on low-RAM
-devices. Text selection, long-press callouts and the context menu are disabled everywhere
+A throttled image loader — three downloads at a time, 140 ms apart, with exponential
+back-off and a global cool-down when the Wikimedia CDN starts returning `429 Too Many
+Requests`. Without it, switching categories quickly got a screenful of broken thumbnails.
+Plus `preconnect` to the CDN and a **Performance mode** that lightens blur and effects on
+low-RAM devices. Text selection, long-press callouts and the context menu are disabled everywhere
 except inputs and links — so holding a card never opens a copy popup.
 
 ## Run it
@@ -110,9 +112,9 @@ and install it (you'll need to allow "install unknown apps" for your browser/fil
 | | |
 |---|---|
 | Package | `net.wikiwallpapers.app` |
-| Version | 4.5.0 (versionCode 9) |
+| Version | 4.6.0 (versionCode 10) |
 | Min / Target SDK | 24 (Android 7) / 34 |
-| Size | ~520 KB |
+| Size | ~525 KB |
 | Permissions | Internet, network state, set wallpaper |
 
 ## Build the APK
