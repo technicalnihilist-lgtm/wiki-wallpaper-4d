@@ -6,7 +6,7 @@
 
 **2,322 free wallpapers from Wikimedia Commons — liquid-glass UI, 4D depth, live updates, and full credits for every single image.**
 
-[![Web](https://img.shields.io/badge/web-open%20index.html-4c82ff)](#-run-it)
+[![Web](https://img.shields.io/badge/web-open%20index.html-4c82ff)](
 [![Android](https://img.shields.io/badge/android-APK%20v4.0.0-3ddc84)](../../releases/latest)
 [![License](https://img.shields.io/badge/code-MIT-blue)](LICENSE)
 [![Images](https://img.shields.io/badge/images-CC%20BY--SA%20%2F%20PD-orange)](CREDITS.md)
@@ -87,7 +87,7 @@ and install it (you'll need to allow "install unknown apps" for your browser/fil
 | | |
 |---|---|
 | Package | `net.wikiwallpapers.app` |
-| Version | 4.1.0 (versionCode 5) |
+| Version | 4.2.0 (versionCode 6) |
 | Min / Target SDK | 24 (Android 7) / 34 |
 | Size | ~480 KB |
 | Permissions | Internet, network state, set wallpaper |
