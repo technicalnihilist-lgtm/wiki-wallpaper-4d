@@ -1,0 +1,5 @@
+android/build/
+android/tools/keystore.jks.bak
+hs_err_pid*.log
+*.apk.idsig
+.DS_Store
