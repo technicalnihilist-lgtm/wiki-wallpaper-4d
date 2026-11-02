@@ -725,6 +725,41 @@ function infoOf(p){
     w:ii.width,h:ii.height,size:ii.size,cat:term||'Commons'};
 }
 
+/* ================= image loader (429-safe) ================= */
+const IMG_MAX=3, IMG_GAP=140;
+let imgActive=0,imgCooldown=0,imgFailStreak=0,imgTimer=0,imgLastStart=0;
+const imgQ=[];
+function enqueueImg(img){imgQ.push(img);pumpImgs()}
+function pumpImgs(){
+  if(imgTimer)return;
+  const now=Date.now();
+  if(now<imgCooldown){
+    imgTimer=setTimeout(()=>{imgTimer=0;pumpImgs()},Math.max(300,Math.min(5000,imgCooldown-now)));
+    return;
+  }
+  const gapLeft=imgLastStart+IMG_GAP-now;
+  if(gapLeft>0&&imgActive>0){
+    imgTimer=setTimeout(()=>{imgTimer=0;pumpImgs()},gapLeft);
+    return;
+  }
+  while(imgActive<IMG_MAX&&imgQ.length){
+    const img=imgQ.shift();
+    if(!img.isConnected)continue;
+    const attempt=+(img.dataset.attempt||0);
+    imgActive++;imgLastStart=Date.now();
+    img.src=(attempt%2===1)?(img.dataset.small||img.dataset.full):img.dataset.full;
+    return; /* one start per tick keeps the gap honest */
+  }
+}
+function retryImg(img,face){
+  const a=+(img.dataset.attempt||0);
+  imgFailStreak++;
+  if(imgFailStreak>=3)imgCooldown=Date.now()+Math.min(20000,1500*imgFailStreak);
+  if(a>=3){face.classList.add('failed');return}
+  img.dataset.attempt=String(a+1);
+  setTimeout(()=>{if(img.isConnected){imgQ.unshift(img);pumpImgs()}},1200*Math.pow(2,a)+Math.random()*500);
+}
+
 /* ================= grid ================= */
 const grid=$('grid');
 let revealN=0,revealT=0;
@@ -744,16 +779,10 @@ function makeCell(d){
   cell.style.aspectRatio=clamp(d.w/d.h,0.62,1.5).toFixed(3);
   const card=el('div',{class:'card',tabindex:'0',role:'button','aria-label':d.title+' — '+creditShort(d)});
   const face=el('div',{class:'face'}),img=el('img',{alt:d.title,decoding:'async',loading:'lazy'});
-  const src2=resize(d.thumb,250);
-  if(src2!==d.thumb){img.srcset=src2+' 250w, '+d.thumb+' 500w';img.sizes='(max-width:560px) 46vw, (max-width:900px) 30vw, 220px'}
-  img.onload=()=>{face.classList.add('loaded');face.classList.remove('failed')};
-  img.onerror=()=>{
-    if(!img.dataset.retried){
-      img.dataset.retried='1';
-      setTimeout(()=>{img.src=resize(d.thumb,250)},1200);
-    }else face.classList.add('failed');
-  };
-  img.src=d.thumb;
+  img.dataset.full=d.thumb;
+  img.dataset.small=resize(d.thumb,250);
+  img.onload=()=>{imgActive=Math.max(0,imgActive-1);imgFailStreak=0;face.classList.add('loaded');face.classList.remove('failed');pumpImgs()};
+  img.onerror=()=>{imgActive=Math.max(0,imgActive-1);retryImg(img,face);pumpImgs()};
   face.append(img,el('div',{class:'glare'}));
   card.append(face,el('div',{class:'cap'},
     el('span',{class:'ct'},d.title),
@@ -765,6 +794,7 @@ function makeCell(d){
   card.addEventListener('pointerenter',e=>{if(e.pointerType==='mouse')setBg(d.thumb)});
   cell.classList.add('in');
   grid.append(cell);
+  enqueueImg(img);
   if(io)io.observe(cell);else reveal(cell);
 }
 /* 3D tilt (event delegation, no per-card listeners) */
