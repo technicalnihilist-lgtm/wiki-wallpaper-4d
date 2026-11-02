@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.Display;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
@@ -19,6 +20,7 @@ import java.io.InputStream;
 public class MainActivity extends Activity {
 
     private static final String HOST = "appassets.androidplatform.net";
+    private static final float TARGET_HZ = 120f;
     private WebView web;
 
     @Override
@@ -29,6 +31,7 @@ public class MainActivity extends Activity {
         w.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
         w.setStatusBarColor(0xFF0B0D12);
         w.setNavigationBarColor(0xFF0B0D12);
+        requestHighFrameRate();
 
         web = new WebView(this);
         web.setBackgroundColor(0xFF0B0D12);
@@ -90,6 +93,54 @@ public class MainActivity extends Activity {
         if (path.endsWith(".jpg") || path.endsWith(".jpeg")) return "image/jpeg";
         if (path.endsWith(".svg")) return "image/svg+xml";
         return "application/octet-stream";
+    }
+
+    /** Ask the window to run at the display's fastest refresh rate instead of the 60 Hz default. */
+    @SuppressWarnings("deprecation")
+    private void requestHighFrameRate() {
+        try {
+            Window w = getWindow();
+
+            // Pick the fastest mode the panel actually offers (90 / 120 / 144 Hz panels all differ).
+            float hz = TARGET_HZ;
+            try {
+                Display d = w.getWindowManager().getDefaultDisplay();
+                Display.Mode best = d.getMode();
+                for (Display.Mode m : d.getSupportedModes()) {
+                    if (m.getRefreshRate() > best.getRefreshRate()) best = m;
+                }
+                if (best != null && best.getRefreshRate() > 0f) hz = best.getRefreshRate();
+            } catch (Throwable ignored) {
+            }
+
+            WindowManager.LayoutParams lp = w.getAttributes();
+            lp.preferredRefreshRate = hz;
+            w.setAttributes(lp);
+
+            // Window.setFrameRate() is API 30+. The public SDK stub we compile against may not
+            // expose it, so call it reflectively — it simply no-ops on older devices.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                try {
+                    java.lang.reflect.Method m = Window.class.getMethod("setFrameRate", float.class, int.class);
+                    m.invoke(w, hz, 0 /* FRAME_RATE_COMPATIBILITY_DEFAULT */);
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Some OEM builds reset the window frame rate when the activity comes back.
+        requestHighFrameRate();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            try {
+                getWindow().setSustainedPerformanceMode(false);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     private void exitApp() {
