@@ -249,11 +249,11 @@ footer .cbtn{flex:none;display:inline-block;padding:11px 20px;margin-bottom:8px}
 .pull.on{opacity:1}
 .pull .pico{width:14px;height:14px;border-radius:50%;border:2px solid rgba(255,255,255,.28);border-top-color:#fff;flex:none}
 .pull.spin .pico{animation:spin .8s linear infinite}
-.newpill{position:fixed;left:50%;transform:translateX(-50%);top:calc(70px + var(--sa-top));z-index:46;
+.newpill{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom));top:auto;z-index:46;
   padding:10px 18px;border-radius:99px;font-size:13px;font-weight:800;color:#04121a;
   background:linear-gradient(90deg,#4ce7a4,#35c8ff);box-shadow:0 10px 26px rgba(53,200,255,.4),inset 0 1px 0 rgba(255,255,255,.6);
   animation:pillIn .5s cubic-bezier(.34,1.56,.64,1)}
-@keyframes pillIn{from{transform:translateX(-50%) translateY(-16px) scale(.9);opacity:0}}
+@keyframes pillIn{from{transform:translateX(-50%) translateY(16px) scale(.9);opacity:0}}
 .livedot{font-size:11.5px;font-weight:800;letter-spacing:.02em;opacity:.65}
 .livedot.on{color:#2ee6a8;opacity:1}
 .newtag{position:absolute;top:8px;left:8px;z-index:3;padding:3px 8px;border-radius:99px;font-size:9px;font-weight:900;
@@ -345,6 +345,11 @@ html.lite .card,html.lite .face{box-shadow:0 10px 22px -10px rgba(0,0,0,.55),ins
 html.lite .pbadge{animation:none}
 html.lite .glare{display:none!important}
 .cell{contain:layout style}
+
+.morewrap{display:flex;justify-content:center;padding:6px 0 20px}
+.morebtn{padding:12px 22px;border-radius:99px;font-size:13.5px;font-weight:800;letter-spacing:.01em;
+  color:var(--text);min-width:200px;transition:transform .2s cubic-bezier(.34,1.56,.64,1)}
+.morebtn:active{transform:scale(.95)}
 </style>
 </head>
 <body>
@@ -380,6 +385,7 @@ html.lite .glare{display:none!important}
   <div class="grid" id="grid"></div>
   <div id="status"></div>
   <div id="sentinel"></div>
+  <div class="morewrap"><button class="morebtn glass press" id="moreBtn" type="button" hidden>Aur wallpapers ↓</button></div>
   <footer>
     <p class="fnote">Saare wallpapers <a href="https://commons.wikimedia.org" target="_blank" rel="noopener">Wikimedia Commons</a> se hain — Wikipedia ki free media library. Har image ka photographer, license aur source link uske window me aur credits list me diya gaya hai.</p>
     <button class="cbtn pri press" id="openCredits" type="button">📜 Saare credits dekho</button>
@@ -813,7 +819,17 @@ function buildPool(){
 function renderChunk(n){
   const end=Math.min(pool.length,pos+n);
   for(;pos<end;pos++)makeCell(pool[pos]);
+  updateMoreBtn();
   updateMeta();
+}
+function updateMoreBtn(){
+  const b=$('moreBtn');
+  if(!b)return;
+  const left=pool.length-pos;
+  const canLoad=left>0||(!liveDone&&S.more&&mode!=='fresh')||(mode==='fresh'&&!!freshCont);
+  b.hidden=!canLoad;
+  if(!canLoad)return;
+  b.textContent=left>0?('Aur '+left.toLocaleString('en-IN')+' wallpapers ↓'):'Wikimedia se aur laao ↓';
 }
 async function loadLive(){
   if(loading||liveDone)return;
@@ -856,12 +872,32 @@ function more(){
   if(!liveDone&&S.more&&navigator.onLine){loadLive();return}
   if(!loading)showStatus(pool.length?'end':'empty');
 }
+let sentinelRaf=0,sentinelBusy=false;
 function checkSentinel(){
+  if(sentinelBusy)return;
   const s=$('sentinel');
-  if(s.getBoundingClientRect().top<innerHeight+900)more();
+  if(!s)return;
+  if(s.getBoundingClientRect().top<innerHeight+900){
+    sentinelBusy=true;
+    try{more()}finally{setTimeout(()=>{sentinelBusy=false},60)}
+  }
 }
-if('IntersectionObserver' in window)new IntersectionObserver(es=>{if(es[0].isIntersecting)more()},{rootMargin:'900px'}).observe($('sentinel'));
-else addEventListener('scroll',checkSentinel,{passive:true});
+function onScrollCheck(){
+  if(sentinelRaf)return;
+  sentinelRaf=requestAnimationFrame(()=>{sentinelRaf=0;checkSentinel()});
+}
+addEventListener('scroll',onScrollCheck,{passive:true});
+addEventListener('resize',onScrollCheck,{passive:true});
+addEventListener('orientationchange',onScrollCheck,{passive:true});
+if('IntersectionObserver' in window){
+  const so=new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting))checkSentinel()},{rootMargin:'900px'});
+  so.observe($('sentinel'));
+  window.__so=so;
+}
+/* belt and braces: if the feed is short enough to fit, keep filling */
+setInterval(()=>{
+  if(!loading&&!isOpen&&pos<pool.length&&document.documentElement.scrollHeight<innerHeight*1.6)checkSentinel();
+},900);
 
 function start(t){
   term=t||'';
@@ -1205,6 +1241,11 @@ async function closePop(){
   if(!popOpen)pop.style.display='none';
   if(a)try{a.cancel()}catch(e){}
 }
+$('moreBtn').addEventListener('click',e=>{
+  const b=e.currentTarget;b.disabled=true;
+  more();
+  setTimeout(()=>{b.disabled=false},400);
+});
 $('dots').addEventListener('click',()=>popOpen?closePop():openPop());
 document.addEventListener('pointerdown',e=>{
   if(popOpen&&!$('pop').contains(e.target)&&!$('dots').contains(e.target))closePop();
@@ -1573,7 +1614,7 @@ apply();buildPop();
 moveLens(chipsBox,true);
 if(document.fonts&&document.fonts.ready)document.fonts.ready.then(()=>moveLens(chipsBox,true));
 start(term);
-setTimeout(()=>{if(S.live&&navigator.onLine)checkFresh()},12000);
+setTimeout(()=>{if(S.live&&navigator.onLine)checkFresh()},45000);
 })();
 </script>
 </body>
