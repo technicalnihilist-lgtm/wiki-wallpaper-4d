@@ -3,6 +3,32 @@
 Every change below keeps the UI, layout, wording and features exactly as they are.
 Only correctness, stability and speed change.
 
+## v4.9.0 — 2026-11-03
+**The image loader could die for good; a card could stay invisible after arrow-key browsing**
+- **Loader stall (severe).** Replacing the grid — a category chip, the search form, the refresh button, the
+  "new wallpapers" snackbar — calls `grid.replaceChildren()`, which aborts the image requests that are in flight.
+  Those aborted `<img>` elements never fire `load` or `error`, so the loader's in-flight counter (`imgActive`)
+  never came back down. As soon as it reached the concurrency cap (6) the queue stopped being served for the rest
+  of the session: every card stayed a grey shimmer, `imgQ` grew without bound, and nothing recovered it — not the
+  cool-down, not a timer, not switching category again. Reproduced deterministically in headless Chromium against
+  the live Wikimedia CDN (scroll deep so the loader is busy, then switch category 4×): `imgActive` pinned at 6,
+  180 images queued, **0 of 76 cards had an image 12 s later and it never recovered**. In-flight slots are now
+  tracked in a `Set` and released when the grid is dropped (`clearGrid()`), which also prunes detached entries out
+  of the queue. After: `imgActive` drains 1 → 5 → 4 → 3 → 0, queue empties, **61 of 61 cards loaded in ~10 s**.
+- **Invisible card after arrow-key browsing.** `openModal()` hides the clicked card with `visibility:hidden`, and
+  `closeModal()` only un-hid `curCell` — but ← / → navigation (`navModal`) sets `curCell=null`, so closing the
+  window left the card you opened as a permanent hole in the grid. The hidden cell is now remembered separately
+  (`hiddenCell`) and always restored. Verified: `visibility` after open → ← → → close was `hidden`, now `(visible)`.
+- Faster pool build on every category switch: the 2,322-item list is normalised once (`allNorm()`) and each item's
+  search haystack is cached in a `WeakMap` instead of being rebuilt on every filter — **4.4 ms → 0.6 ms** per build
+  (same 52 matches before and after).
+- Removed the 1.2 s `querySelectorAll('.cell:not(.in)')` sweep: every cell gets `.in` when it is created, so it
+  matched nothing (0 matches in every run) and only cost a full-grid DOM query every 1.2 s.
+- Unchanged: layout, colours, spacing, wording, icons, animations, features. Verified over the real CDN in headless
+  Chromium: 223 thumbnail requests, all `200`, 0 failed images, 0 console errors, 0 unhandled rejections, 0 failed
+  requests. Scroll jank is unchanged within run-to-run noise (17 long tasks / 2.04 s over 12 scroll steps vs
+  14 / 1.75 s before).
+
 ## v4.8.0 — 2026-11-02
 **120 Hz support**
 - The Android shell now asks the window to run at the panel's fastest refresh rate instead of the
