@@ -116,7 +116,7 @@ and install it (you'll need to allow "install unknown apps" for your browser/fil
 | | |
 |---|---|
 | Package | `net.wikiwallpapers.app` |
-| Version | 4.6.0 (versionCode 10) |
+| Version | 4.8.0 (versionCode 12) |
 | Min / Target SDK | 24 (Android 7) / 34 |
 | Size | ~525 KB |
 | Permissions | Internet, network state, set wallpaper |
