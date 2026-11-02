@@ -136,6 +136,19 @@ The signing key is committed at `android/tools/keystore.jks`
 (store & key password `wikiwallpapers`, alias `wikiwallpapers`) so that future builds
 can be installed as an update over this one. Replace it with your own key for a real release.
 
+
+## Daily maintenance
+
+This project is optimised and bug-fixed **every day** by an automated agent run
+(`03:30 IST`). The rules for that job are strict:
+
+- **No UI changes** — no layout, colour, wording, feature or interaction changes
+- Only correctness, stability and speed
+- Every change is measured or reproduced before it ships (live-CDN harness, Long Tasks API, 429 counters)
+- Every change is recorded in [`CHANGELOG.md`](CHANGELOG.md) and shipped as a new signed APK
+
+`tools/setup-build.sh` provisions the JDK + Android SDK pieces the Gradle-free build needs.
+
 ## Project layout
 
 ```
