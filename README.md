@@ -1,6 +1,8 @@
 <div align="center">
 
-# 🖼️ Wiki Wallpapers 4D
+<img src="screenshots/app-icon.png" alt="Wiki Wallpapers 4D icon" width="120">
+
+# Wiki Wallpapers 4D
 
 **2,322 free wallpapers from Wikimedia Commons — liquid-glass UI, 4D depth, live updates, and full credits for every single image.**
 
@@ -55,6 +57,10 @@ infinite scroll.
 - 🌐 **Live search merged in** — any keyword also queries Commons directly
 - ● **Live / ○ Offline** indicator, plus a full offline fallback on the embedded library
 
+**4D app icon**
+The launcher icon is a real 4D tile — an extruded depth slab under a glass face with a
+specular highlight and a drop shadow — and the same icon sits next to the title inside the app.
+
 **Fullscreen**
 Edge-to-edge viewer with `Fit` / `Fill`, `‹ ›` arrows, `←` `→` keys, swipe navigation,
 a credit strip that stays visible, and `Esc` to exit. The whole app also has an
@@ -81,9 +87,9 @@ and install it (you'll need to allow "install unknown apps" for your browser/fil
 | | |
 |---|---|
 | Package | `net.wikiwallpapers.app` |
-| Version | 4.0.0 (versionCode 4) |
+| Version | 4.1.0 (versionCode 5) |
 | Min / Target SDK | 24 (Android 7) / 34 |
-| Size | ~400 KB |
+| Size | ~480 KB |
 | Permissions | Internet, network state, set wallpaper |
 
 ## Build the APK
