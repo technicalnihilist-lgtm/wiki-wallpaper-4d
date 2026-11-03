@@ -1,7 +1,10 @@
 package net.wikiwallpapers.app;
 
 import android.app.Activity;
+import android.app.WallpaperManager;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -12,10 +15,13 @@ import android.view.WindowManager;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
 import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 
 public class MainActivity extends Activity {
 
@@ -53,6 +59,8 @@ public class MainActivity extends Activity {
             s.setSafeBrowsingEnabled(false);
         }
 
+        web.addJavascriptInterface(new WallpaperBridge(), "Wallpaper");
+
         web.setWebViewClient(new WebViewClient() {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest req) {
@@ -83,6 +91,92 @@ public class MainActivity extends Activity {
 
         setContentView(web);
         web.loadUrl("https://" + HOST + "/index.html");
+    }
+
+    /* Sets the device wallpaper from an image URL. Runs on the WebView's JS bridge thread,
+       downloads + downsamples off the UI thread and reports back through window.__wallResult. */
+    private class WallpaperBridge {
+        @JavascriptInterface
+        public String set(final String url, final String which) {
+            if (url == null || !(url.startsWith("https://") || url.startsWith("http://"))) {
+                return "error: bad url";
+            }
+            try {
+                new Thread(new Runnable() {
+                    public void run() {
+                        String result = "error";
+                        HttpURLConnection c = null;
+                        try {
+                            c = (HttpURLConnection) new URL(url).openConnection();
+                            c.setConnectTimeout(15000);
+                            c.setReadTimeout(30000);
+                            c.setInstanceFollowRedirects(true);
+                            c.connect();
+                            InputStream in = c.getInputStream();
+
+                            BitmapFactory.Options probe = new BitmapFactory.Options();
+                            probe.inJustDecodeBounds = true;
+                            byte[] data = readAll(in);
+                            BitmapFactory.decodeByteArray(data, 0, data.length, probe);
+                            int sample = 1;
+                            int longest = Math.max(probe.outWidth, probe.outHeight);
+                            while (longest / sample > 2400) sample *= 2;
+
+                            BitmapFactory.Options opt = new BitmapFactory.Options();
+                            opt.inSampleSize = sample;
+                            Bitmap bmp = BitmapFactory.decodeByteArray(data, 0, data.length, opt);
+                            if (bmp == null) {
+                                result = "error: could not decode image";
+                            } else {
+                                WallpaperManager wm = WallpaperManager.getInstance(MainActivity.this);
+                                int flags = "home".equals(which) ? WallpaperManager.FLAG_SYSTEM
+                                        : "lock".equals(which) ? WallpaperManager.FLAG_LOCK
+                                        : (WallpaperManager.FLAG_SYSTEM | WallpaperManager.FLAG_LOCK);
+                                wm.setBitmap(bmp, null, true, flags);
+                                bmp.recycle();
+                                result = "ok";
+                            }
+                        } catch (Exception e) {
+                            result = "error: " + e.getClass().getSimpleName();
+                        } finally {
+                            try { if (c != null) c.disconnect(); } catch (Exception ignored) { }
+                        }
+                        final String r = result;
+                        runOnUiThread(new Runnable() {
+                            public void run() {
+                                try {
+                                    web.evaluateJavascript("window.__wallResult&&window.__wallResult(" +
+                                            jsString(r) + ")", null);
+                                } catch (Exception ignored) { }
+                            }
+                        });
+                    }
+                }).start();
+                return "started";
+            } catch (Exception e) {
+                return "error: " + e.getClass().getSimpleName();
+            }
+        }
+
+        private byte[] readAll(InputStream in) throws Exception {
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[16384];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            in.close();
+            return out.toByteArray();
+        }
+
+        private String jsString(String s) {
+            StringBuilder b = new StringBuilder("'");
+            for (int i = 0; i < s.length(); i++) {
+                char ch = s.charAt(i);
+                if (ch == '\'' || ch == '\\') b.append('\\').append(ch);
+                else if (ch < ' ') b.append(' ');
+                else b.append(ch);
+            }
+            return b.append("'").toString();
+        }
     }
 
     private static String mimeOf(String path) {
