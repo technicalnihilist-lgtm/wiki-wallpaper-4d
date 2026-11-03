@@ -3,6 +3,32 @@
 Every change below keeps the UI, layout, wording and features exactly as they are.
 Only correctness, stability and speed change.
 
+## v4.9.1 — 2026-11-03
+**"🆕 Naye" kept showing the same wallpapers, and kept calling them new**
+- **Same images announced again and again.** The "new wallpapers" pill and the refresh button dedupe with
+  `seen` / `seenT`, and `start()` rebuilds both of them for the current filter. So every category chip or search
+  wiped the memory of what had already been added, and the next refresh/pill put the *same* pictures back on top
+  marked NEW. Reproduced in headless Chromium: refresh → 35 added; switch category and back → refresh again →
+  **"✨ 35 new wallpapers added" with the identical 12 titles at the top**; the pill also came back with the same
+  count. Now a session-long `offered` set (page id + normalised title) records everything already shown or
+  announced, and every add path checks it. After: the same sequence ends in **"✅ Already up to date"**, the pill
+  stays hidden after a category switch, and a full run shows **0 duplicate cards** in the grid.
+- **The feed itself was stale.** The "new" stream was `Category:Featured pictures on Wikimedia Commons` sorted by
+  promotion date — new members arrive a few times a week, so the newest card was **2026-10-30 (4 days old)** and
+  the tab looked identical every day. `fetchFresh()` now merges that curated stream with the genuinely newest
+  uploads (`list=allimages`, timestamp descending): a cheap index, then full credit metadata for the few picks.
+  Bulk/bot batches are filtered out (an uploader with more than 8 files in the window is skipped — that is how
+  47 near-identical "ISS073-E-…" frames and a flood of logo PNGs used to own the top of the list), only JPEGs pass,
+  obvious non-photos (logos, maps, charts, coats of arms, scans, certificates…) are dropped, and one image per
+  upload series is kept. Result: the first screen of 🆕 Naye now leads with today's uploads
+  (e.g. "Narrow-Gauge-Railway Narentabahn Komadina-Quelle", "Ivory Monument of Kartonyono Ngawi") followed by the
+  curated featured pictures.
+- Cost: a user refresh / opening 🆕 Naye makes two extra API calls (≈320 KB index + ≈40 KB metadata); the 150 s
+  background check uses the small 200-item index instead (≈130 KB). Nothing is fetched on a normal page load.
+- Unchanged: layout, colours, spacing, wording, icons, animations, features, and the 2,322 embedded wallpapers.
+  Verified over the real CDN: 101 thumbnail requests all `200`, 0 console errors, 0 unhandled rejections,
+  0 failed requests, search / 🆕 Naye / modal open-close all working.
+
 ## v4.9.0 — 2026-11-03
 **The image loader could die for good; a card could stay invisible after arrow-key browsing**
 - **Loader stall (severe).** Replacing the grid — a category chip, the search form, the refresh button, the
