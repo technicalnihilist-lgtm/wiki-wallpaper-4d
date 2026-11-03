@@ -1108,7 +1108,9 @@ const SRC_DEFS=[
  {id:'europeana',  name:'Europeana',           home:'https://www.europeana.eu/',               key:1, keyUrl:'https://pro.europeana.eu/page/get-api', lic:'CC0 / PD / CC BY'},
  {id:'loc',        name:'Library of Congress', home:'https://www.loc.gov/pictures/',           key:0, lic:'Public Domain'},
  {id:'archive',    name:'Internet Archive',    home:'https://archive.org/',                    key:0, lic:'CC / Public Domain'},
- {id:'met',        name:'The Met',             home:'https://www.metmuseum.org/',              key:0, lic:'Public Domain (CC0)'}
+ {id:'met',        name:'The Met',             home:'https://www.metmuseum.org/',              key:0, lic:'Public Domain (CC0)'},
+ {id:'google',     name:'Google Images',       home:'https://images.google.com/',              key:1, key2:'Search engine ID (CX)',
+   keyUrl:'https://developers.google.com/custom-search/v1/introduction', lic:'CC / Public Domain only (Google rights filter)'}
 ];
 const SRCBY={};SRC_DEFS.forEach(d=>SRCBY[d.id]=d);
 
@@ -1131,9 +1133,10 @@ function noteFail(id){
     toast(((SRCBY[id]||{}).name||id)+' removed — it returned no images');
   }
 }
-/* sources that are switched on, not known-broken, and have their key when one is needed */
+/* a source is usable when it is switched on, not known-broken, and has every credential it needs */
+const hasKey=d=>(!d.key||!!KEYS[d.id])&&(!d.key2||!!KEYS[d.id+'_cx']);
 function usableSources(){
-  return SRC_DEFS.filter(d=>SRC_ON.has(d.id)&&!SRC_DEAD.has(d.id)&&(!d.key||!!KEYS[d.id]));
+  return SRC_DEFS.filter(d=>SRC_ON.has(d.id)&&!SRC_DEAD.has(d.id)&&hasKey(d));
 }
 const KEYS=(()=>{try{return JSON.parse(localStorage.getItem('ww_keys')||'{}')}catch(e){return{}}})();
 const saveKeys=()=>{try{localStorage.setItem('ww_keys',JSON.stringify(KEYS))}catch(e){}};
@@ -1359,6 +1362,35 @@ const FEED={
     }).filter(Boolean);
     return {items,more:docs.length>=24};
   },
+  async google(q,page){
+    const k=KEYS.google,cx=KEYS.google_cx;
+    if(!k||!cx)throw new Error('api key needed');
+    /* official Custom Search JSON API. rights= keeps only CC / public-domain results — the same
+       filter Google Images offers under "Usage rights" — so nothing all-rights-reserved gets in.
+       Google returns no per-image licence text or creator, so the credit points at the page it
+       was found on and the licence line says exactly that, instead of inventing an author. */
+    const start=Math.min(91,(page-1)*10+1);
+    const u='https://www.googleapis.com/customsearch/v1?key='+encodeURIComponent(k)+
+      '&cx='+encodeURIComponent(cx)+'&q='+encodeURIComponent(q||'wallpaper')+
+      '&searchType=image&rights=cc_publicdomain,cc_attribute,cc_sharealike'+
+      '&imgSize=large&safe=active&num=10&start='+start;
+    const j=await getJSON(u);
+    if(j.error)throw new Error((j.error.message||'google error').slice(0,60));
+    const items=((j.items)||[]).map(it=>{
+      const im=it.image||{};
+      if(!im.thumbnailLink||!it.link)return null;
+      const w=im.width||0,h=im.height||0;
+      if(w&&h&&(Math.max(w,h)<1200||Math.min(w,h)<700))return null;
+      return mkItem({id:it.cacheId||it.link,src:'google',title:stripTags(it.title||it.snippet||'Wallpaper'),
+        artist:'Unknown creator',artistUrl:'',page:im.contextLink||it.link,
+        thumb:im.thumbnailLink,original:it.link,w:w,h:h,
+        license:'CC / PD (Google filter)',
+        licenseUrl:'https://creativecommons.org/',
+        desc:stripTags(it.snippet||'').slice(0,300),
+        cat:''});
+    }).filter(Boolean);
+    return {items,more:items.length>=10};
+  },
   async met(q,page){
     const s=await getJSON('https://collectionapi.metmuseum.org/public/collection/v1/search?hasImages=true&q='+
       encodeURIComponent(q||'painting'));
@@ -1384,7 +1416,7 @@ function activeSources(){
   const list=[];
   if(feedMode==='wiki'||feedMode==='fav')return list;
   if(feedMode==='all'){usableSources().forEach(d=>list.push(d))}
-  else if(SRCBY[feedMode]&&!SRC_DEAD.has(feedMode)&&(!SRCBY[feedMode].key||KEYS[feedMode]))list.push(SRCBY[feedMode]);
+  else if(SRCBY[feedMode]&&!SRC_DEAD.has(feedMode)&&hasKey(SRCBY[feedMode]))list.push(SRCBY[feedMode]);
   return list;
 }
 
@@ -1900,14 +1932,22 @@ function buildRow(r){
     });
     row.append(el('div',{class:'sl'},el('span',{},d.name,r.sub?el('small',{},r.sub):null),b));
     if(d.key){
-      const inp=el('input',{type:'password',placeholder:'API key for '+d.name,value:KEYS[d.id]||'',
-        'aria-label':d.name+' API key',autocomplete:'off',spellcheck:'false'});
-      let tmr=0;
-      inp.addEventListener('input',()=>{clearTimeout(tmr);tmr=setTimeout(()=>{
-        KEYS[d.id]=inp.value.trim();saveKeys();
-        toast(inp.value.trim()?d.name+' key saved':d.name+' key cleared');
-      },600)});
-      row.append(el('div',{class:'krow'},inp,el('a',{href:d.keyUrl,target:'_blank',rel:'noopener noreferrer'},'get key ↗')));
+      const mkField=(store,ph)=>{
+        const inp=el('input',{type:'password',placeholder:ph,value:KEYS[store]||'',
+          'aria-label':d.name+' '+ph,autocomplete:'off',spellcheck:'false'});
+        let tmr=0;
+        inp.addEventListener('input',()=>{clearTimeout(tmr);tmr=setTimeout(()=>{
+          KEYS[store]=inp.value.trim();saveKeys();
+          toast(inp.value.trim()?d.name+' saved':d.name+' cleared');
+          if(typeof buildSrcChips==='function')buildSrcChips();
+        },600)});
+        return inp;
+      };
+      const first=mkField(d.id,'API key for '+d.name);
+      if(d.key2)row.append(el('div',{class:'krow'},first));
+      else row.append(el('div',{class:'krow'},first,el('a',{href:d.keyUrl,target:'_blank',rel:'noopener noreferrer'},'get key ↗')));
+      if(d.key2)row.append(el('div',{class:'krow'},mkField(d.id+'_cx',d.key2),
+        el('a',{href:d.keyUrl,target:'_blank',rel:'noopener noreferrer'},'get key ↗')));
     }
     return row;
   }else if(r.t==='lang'){
