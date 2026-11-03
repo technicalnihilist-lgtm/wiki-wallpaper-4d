@@ -115,6 +115,7 @@ main{max-width:1320px;margin:0 auto;padding:18px 14px calc(60px + env(safe-area-
   animation:shimmer 1.5s linear infinite;will-change:transform}
 .face.loaded::before,.face.failed::before{display:none}
 html.noshimmer .face::before{display:none}
+.cell.far .face::before{animation:none;will-change:auto}
 .face img{position:absolute;inset:-8%;width:116%;height:116%;object-fit:cover;opacity:0;
   transform:translate3d(var(--ix,0px),var(--iy,0px),0);transition:opacity .7s ease,transform var(--t) var(--spring)}
 .card.tracking .face img{transition:opacity .7s ease,transform .09s linear}
@@ -747,9 +748,9 @@ function infoOf(p){
 /* ================= image loader (429-safe) ================= */
 let IMG_MAX=6, IMG_GAP=45;
 let imgActive=0,imgCooldown=0,imgFailStreak=0,imgOkStreak=0,imgTimer=0,imgLastStart=0;
-const imgQ=[];
+const imgQ=[],imgQHi=[]; /* imgQHi: cards the user can actually see, served first, in DOM order */
 const imgLive=new Set(); /* images currently counted in imgActive */
-function enqueueImg(img){imgQ.push(img);pumpImgs()}
+function enqueueImg(img,hi){if(hi)imgQHi.push(img);else imgQ.push(img);pumpImgs()}
 function releaseImg(img){if(imgLive.delete(img))imgActive=Math.max(0,imgActive-1)}
 function pumpImgs(){
   if(imgTimer)return;
@@ -763,13 +764,17 @@ function pumpImgs(){
     imgTimer=setTimeout(()=>{imgTimer=0;pumpImgs()},gapLeft);
     return;
   }
-  while(imgActive<IMG_MAX&&imgQ.length){
-    const img=imgQ.shift();
+  while(imgActive<IMG_MAX&&(imgQHi.length||imgQ.length)){
+    const img=imgQHi.length?imgQHi.shift():imgQ.shift();
     if(!img.isConnected)continue;
     const attempt=+(img.dataset.attempt||0);
     imgActive++;imgLive.add(img);imgLastStart=Date.now();
     img.src=(attempt%2===1)?(img.dataset.small||img.dataset.full):img.dataset.full;
-    return; /* one start per tick keeps the gap honest */
+    /* one start per tick keeps the gap honest — and the tick must re-arm itself, otherwise the
+       next start waits for the previous image to finish and the loader never reaches IMG_MAX
+       parallel requests (it ran effectively serial, so a screenful took many seconds to fill) */
+    if(imgActive<IMG_MAX&&(imgQHi.length||imgQ.length))imgTimer=setTimeout(()=>{imgTimer=0;pumpImgs()},IMG_GAP);
+    return;
   }
 }
 function retryImg(img,face){
@@ -779,7 +784,7 @@ function retryImg(img,face){
   if(imgFailStreak>=3)imgCooldown=Date.now()+Math.min(20000,1500*imgFailStreak);
   if(a>=3){face.classList.add('failed');return}
   img.dataset.attempt=String(a+1);
-  setTimeout(()=>{if(img.isConnected){imgQ.unshift(img);pumpImgs()}},1200*Math.pow(2,a)+Math.random()*500);
+  setTimeout(()=>{if(img.isConnected){imgQHi.unshift(img);pumpImgs()}},1200*Math.pow(2,a)+Math.random()*500);
 }
 
 /* ================= grid ================= */
@@ -788,10 +793,27 @@ const grid=$('grid');
    so their loader slots must be released by hand or the loader stalls forever. */
 function clearGrid(){
   grid.replaceChildren();
-  if(imgQ.length)for(let i=imgQ.length-1;i>=0;i--)if(!imgQ[i].isConnected)imgQ.splice(i,1);
+  for(const q of [imgQHi,imgQ])for(let i=q.length-1;i>=0;i--)if(!q[i].isConnected)q.splice(i,1);
   if(imgLive.size)for(const im of imgLive)if(!im.isConnected)releaseImg(im);
 }
 let revealN=0,revealT=0;
+/* Images are only requested for cards that are close to the viewport, and cards far away get
+   .far so their shimmer animation stops. Before this, every card ever rendered held a decoded
+   bitmap and a running composited animation, however far below the fold it was. */
+const nearIO=('IntersectionObserver' in window)?new IntersectionObserver(es=>{
+  for(const en of es){
+    const c=en.target;
+    if(en.isIntersecting){
+      if(c.classList.contains('far'))c.classList.remove('far');
+      if(!c.dataset.ld){
+        c.dataset.ld='1';
+        const im=c.querySelector('.face img');
+        /* visible cards go to the front queue, in the order they arrived */
+        if(im&&!im.getAttribute('src'))enqueueImg(im,true);
+      }
+    }else if(!c.classList.contains('far'))c.classList.add('far');
+  }
+},{rootMargin:'800px 0px 800px 0px'}):null;
 const io=('IntersectionObserver' in window)?new IntersectionObserver(es=>{
   es.forEach(en=>{if(en.isIntersecting){io.unobserve(en.target);reveal(en.target)}});
 },{rootMargin:'0px 0px -4% 0px'}):null;
@@ -807,7 +829,10 @@ function makeCell(d){
   const cell=el('div',{class:'cell'});
   cell.style.aspectRatio=clamp(d.w/d.h,0.62,1.5).toFixed(3);
   const card=el('div',{class:'card',tabindex:'0',role:'button','aria-label':d.title+' — '+creditShort(d)});
-  const face=el('div',{class:'face'}),img=el('img',{alt:d.title,decoding:'async',loading:'lazy'});
+  /* no loading="lazy" here: the app decides when to fetch (IntersectionObserver + throttled
+     loader). With the attribute set, the browser silently defers the request for cards outside
+     the viewport, the loader never gets its load/error event, and all six slots stay stuck. */
+  const face=el('div',{class:'face'}),img=el('img',{alt:d.title,decoding:'async'});
   img.dataset.full=d.thumb;
   img.dataset.small=resize(d.thumb,250);
   img.onload=()=>{releaseImg(img);imgFailStreak=0;
@@ -824,23 +849,31 @@ function makeCell(d){
   card.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openModal(d,cell)}});
   card.addEventListener('pointerenter',e=>{if(e.pointerType==='mouse')setBg(d.thumb)});
   cell.classList.add('in');
-  grid.append(cell);
-  enqueueImg(img);
+  return cell;
+}
+/* observers are attached only once the card is really in the document — observing a node that
+   is still inside the fragment means it never reports an intersection */
+function watchCell(cell){
   if(io)io.observe(cell);else reveal(cell);
+  if(nearIO)nearIO.observe(cell);else{const im=cell.querySelector('.face img');if(im)enqueueImg(im)}
 }
 /* 3D tilt (event delegation, no per-card listeners) */
-let actCard=null,tiltRaf=0,tiltPos=null;
+let actCard=null,tiltRaf=0,tiltPos=null,tiltBox=null;
 function leaveCard(c){if(!c)return;c.classList.remove('tracking','hot');['--rx','--ry','--ix','--iy','--s'].forEach(p=>c.style.removeProperty(p))}
 grid.addEventListener('pointermove',e=>{
   if(e.pointerType==='touch'||S.depth===0)return;
   const c=e.target.closest&&e.target.closest('.card');
-  if(c!==actCard){leaveCard(actCard);actCard=c;if(c){c.classList.add('tracking','hot');c.style.setProperty('--s',(1+.035*S.depth/100).toFixed(3))}}
+  if(c!==actCard){leaveCard(actCard);actCard=c;tiltBox=null;if(c){c.classList.add('tracking','hot');c.style.setProperty('--s',(1+.035*S.depth/100).toFixed(3))}}
   if(c){tiltPos={c,x:e.clientX,y:e.clientY};if(!tiltRaf)tiltRaf=requestAnimationFrame(applyTilt)}
 });
 grid.addEventListener('pointerleave',()=>{leaveCard(actCard);actCard=null});
 function applyTilt(){
   tiltRaf=0;if(!tiltPos)return;
-  const{c,x,y}=tiltPos,r=c.parentElement.getBoundingClientRect();
+  const{c,x,y}=tiltPos;
+  /* measure the card once per hover instead of once per frame: the rect only changes on
+     scroll/resize, and reading it every frame forced a full layout of the whole grid */
+  if(!tiltBox||tiltBox.c!==c||tiltBox.y!==scrollY)tiltBox={c,y:scrollY,r:c.parentElement.getBoundingClientRect()};
+  const r=tiltBox.r;
   const px=clamp((x-r.left)/r.width,0,1),py=clamp((y-r.top)/r.height,0,1),d=S.depth/100,m=15*d;
   c.style.setProperty('--ry',((px-.5)*2*m).toFixed(2)+'deg');
   c.style.setProperty('--rx',((.5-py)*2*m).toFixed(2)+'deg');
@@ -913,15 +946,23 @@ function buildPool(){
 }
 function renderChunk(n){
   const end=Math.min(pool.length,pos+n);
-  for(;pos<end;pos++)makeCell(pool[pos]);
+  if(end<=pos){updateMoreBtn();updateMeta();return}
+  const frag=document.createDocumentFragment(),added=[];
+  for(;pos<end;pos++){const c=makeCell(pool[pos]);added.push(c);frag.append(c)}
+  grid.append(frag);   /* one DOM insertion per chunk instead of one per card */
+  for(const c of added)watchCell(c);
   updateMoreBtn();
   updateMeta();
 }
+let moreSig='';
 function updateMoreBtn(){
   const b=$('moreBtn');
   if(!b)return;
   const left=pool.length-pos;
   const canLoad=left>0||(!liveDone&&S.more&&mode!=='fresh')||(mode==='fresh'&&!!freshCont);
+  const sig=LANG+'|'+left+'|'+canLoad;
+  if(sig===moreSig)return;
+  moreSig=sig;
   b.hidden=!canLoad;
   if(!canLoad)return;
   b.textContent=left>0?t('more_left',{n:left.toLocaleString('en-IN')}):t('more_live');
@@ -967,7 +1008,7 @@ function more(){
   if(!liveDone&&S.more&&navigator.onLine){loadLive();return}
   if(!loading)showStatus(pool.length?'end':'empty');
 }
-let sentinelRaf=0,sentinelBusy=false;
+let sentinelRaf=0,sentinelBusy=false,sentinelAt=0,sentinelT=0;
 function checkSentinel(){
   if(sentinelBusy)return;
   const s=$('sentinel');
@@ -977,9 +1018,13 @@ function checkSentinel(){
     try{more()}finally{setTimeout(()=>{sentinelBusy=false},60)}
   }
 }
+/* the sentinel check reads layout, so it must not run on every scroll frame while the grid is
+   being extended; the IntersectionObserver below still reacts instantly, this is the safety net */
 function onScrollCheck(){
-  if(sentinelRaf)return;
-  sentinelRaf=requestAnimationFrame(()=>{sentinelRaf=0;checkSentinel()});
+  if(sentinelRaf||sentinelT)return;
+  const wait=150-(Date.now()-sentinelAt);
+  if(wait>0){sentinelT=setTimeout(()=>{sentinelT=0;sentinelAt=Date.now();checkSentinel()},wait);return}
+  sentinelRaf=requestAnimationFrame(()=>{sentinelRaf=0;sentinelAt=Date.now();checkSentinel()});
 }
 addEventListener('scroll',onScrollCheck,{passive:true});
 addEventListener('resize',onScrollCheck,{passive:true});
@@ -991,15 +1036,18 @@ if('IntersectionObserver' in window){
 }
 /* belt and braces: if the feed is short enough to fit, keep filling */
 setInterval(()=>{
-  if(!loading&&!isOpen&&pos<pool.length&&document.documentElement.scrollHeight<innerHeight*1.6)checkSentinel();
-},900);
+  /* checkSentinel() only fills when the sentinel is actually near the viewport, so the old
+     scrollHeight read (a forced layout every 900 ms) is not needed */
+  if(document.hidden||loading||isOpen||pos>=pool.length)return;
+  checkSentinel();
+},1200);
 
 function start(t){
   term=t||'';
   mode=(term==='#fresh')?'fresh':'search';
   token++;if(ctrl)ctrl.abort();ctrl=new AbortController();
   pos=0;liveOffset=0;liveDone=false;loading=false;seen=new Set();revealN=0;pool=[];
-  freshCont=null;pendingFresh=[];if(typeof hideNewPill==='function')hideNewPill();
+  freshCont=null;pendingFresh=[];moreSig='';if(typeof hideNewPill==='function')hideNewPill();
   if(io)io.disconnect();
   clearGrid();actCard=null;
   scrollTo(0,0);
@@ -1125,7 +1173,10 @@ addEventListener('scroll',()=>{
 const win=$('win'),overlay=$('overlay'),dim=$('dim'),pw=$('pwrap'),pimg=$('pimg'),photo=$('photo');
 let isOpen=false,opening=false,closing=false,curData=null,curCell=null,hiddenCell=null;
 
+let photoBox=null;
+addEventListener('resize',()=>{photoBox=null},{passive:true});
 function fitPhoto(){
+  photoBox=null;
   if(!curData)return;
   if(fsMode){pw.style.width='100%';pw.style.height='100%';return}
   const cs=getComputedStyle(photo);
@@ -1274,7 +1325,8 @@ dim.addEventListener('click',()=>closeModal());
 /* photo tilt inside window */
 photo.addEventListener('pointermove',e=>{
   if(S.depth===0||opening)return;
-  const r=photo.getBoundingClientRect(),px=clamp((e.clientX-r.left)/r.width,0,1),py=clamp((e.clientY-r.top)/r.height,0,1),m=12*S.depth/100;
+  if(!photoBox)photoBox=photo.getBoundingClientRect();
+  const r=photoBox,px=clamp((e.clientX-r.left)/r.width,0,1),py=clamp((e.clientY-r.top)/r.height,0,1),m=12*S.depth/100;
   pw.classList.add('tracking');
   pw.style.setProperty('--ry',((px-.5)*2*m).toFixed(2)+'deg');pw.style.setProperty('--rx',((.5-py)*2*m).toFixed(2)+'deg');
   $('pglare').style.setProperty('--gx',(px*100)+'%');$('pglare').style.setProperty('--gy',(py*100)+'%');
@@ -1813,9 +1865,13 @@ if(lw){
     lw.style.setProperty('--sx',(50+clamp(nx,-1,1)*38).toFixed(0)+'%');
     lw.style.setProperty('--sy',(50+clamp(ny,-1,1)*38).toFixed(0)+'%');
   };
+  let lwBox=null,lwY=-1;
   addEventListener('pointermove',e=>{
     if(e.pointerType==='touch')return;
-    const r=lw.getBoundingClientRect();
+    /* the icon rect only moves on scroll/resize — measuring it on every mouse move forced a
+       full layout of the whole gallery */
+    if(!lwBox||lwY!==scrollY){lwBox=lw.getBoundingClientRect();lwY=scrollY}
+    const r=lwBox;
     tilt((e.clientX-(r.left+r.width/2))/260,(e.clientY-(r.top+r.height/2))/260);
   },{passive:true});
   addEventListener('deviceorientation',e=>{
