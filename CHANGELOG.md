@@ -3,6 +3,17 @@
 Every change below keeps the UI, layout, wording and features exactly as they are.
 Only correctness, stability and speed change.
 
+## v5.1.1 — 2026-11-03
+**All chips on one line**
+- The two chip rows (image sources on top, categories below) are now a **single scrollable row**:
+  every category first — All, 🆕 New, Cars, Animal, Art, Cartoons, Robots, Anime & Manga, Motorcycles, …
+  — then a thin divider, then the image sources (Wikimedia, All sources (N), ♥ Favourites and each source).
+- The sliding glass lens stays on the active category; the selected source is marked with a soft filled
+  chip in the same row, so both states are readable without a second row.
+- Header is one row shorter on every screen. Verified at 1280×900 and 390×844: row height 37 px, no
+  wrapping (scrollWidth 3270 px, clientWidth 1096 / 342 px), lens lands exactly on the clicked chip,
+  category and source clicks still switch the feed.
+
 ## v5.1.0 — 2026-11-03
 **Wikimedia library doubled to 4,487 wallpapers — and broken sources now remove themselves**
 - **Library 2,322 → 4,487** (+2,165 new images), with 19 new topics on top of the old set: Cars (116),
