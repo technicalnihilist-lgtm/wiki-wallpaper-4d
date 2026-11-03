@@ -3,6 +3,31 @@
 Every change below keeps the UI, layout, wording and features exactly as they are.
 Only correctness, stability and speed change.
 
+## v5.3.0 — 2026-11-03
+**Six new languages, and a worldwide collection (6,288 wallpapers)**
+- **Languages: 9 → 15.** Spanish, French, German, Portuguese, Japanese and Chinese join English, Gujarati,
+  Hindi, Kannada, Malayalam, Marathi, Punjabi, Tamil and Telugu. Each new language carries 107 translated UI
+  strings (search, statuses, toasts, preview labels, all settings, credits, downloads). Category names are
+  deliberately left in English so a chip never turns into an awkward half-translation; missing keys fall back
+  to English, never to a raw `c_xxx` key.
+- Fixed a long-standing gap found while testing: the language picker toasted `t_lang`, a key that was never
+  defined, so switching language showed the literal text "t_lang". It now says "Language changed" in every
+  language that has it.
+- **Global collection: 4,487 → 6,288 wallpapers** (+1,801). Eighteen new regions, each ~100 images:
+  Japan 110, China 101, Spain 109, France 110, Italy 103, Germany 110, United Kingdom 110, USA 107,
+  Brazil 108, Africa 110, Middle East 110, Korea 107, Russia 97, Greece 110, Mexico 106, Egypt 97,
+  Thailand 110, India 104. Same rules as before: real creator + licence from the Commons API, ≥1600×900,
+  photo aspect ratio, maps/logos/scans rejected.
+- Region chips (Japan, China, Spain, India) are pinned next to the topic chips, the rest of the regions follow
+  by image count; the single chip row is unchanged.
+- **The embedded list is stored compactly so 6,288 wallpapers still fit a light file:** each entry keeps only
+  the thumbnail path (the host is added back at read time) and drops the Commons page URL, which is rebuilt
+  from that path — verified lossless on all 6,288 entries (page, thumb, licence and credit identical). The
+  per-image description line was dropped to keep the file small. 3.53 MB → **2.58 MB**.
+- Verified: switching to Japanese, Chinese and Spanish renders the whole UI in that language (placeholder,
+  chips, meta line, preview tabs) with 0 console errors; 15 languages in the picker; preview shows the rebuilt
+  Commons page link and correct credit; boot 2.0 s in the test container (was 2.2 s).
+
 ## v5.2.1 — 2026-11-03
 **Google Images now feeds in live — and a quota error can no longer kill a source**
 - **Live polling is per source and walks deeper every time.** Google (and every relevance-sorted API)
