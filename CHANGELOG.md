@@ -3,6 +3,20 @@
 Every change below keeps the UI, layout, wording and features exactly as they are.
 Only correctness, stability and speed change.
 
+## v5.2.1 — 2026-11-03
+**Google Images now feeds in live — and a quota error can no longer kill a source**
+- **Live polling is per source and walks deeper every time.** Google (and every relevance-sorted API)
+  returns the same first page forever, so polling page 1 always found "nothing new". Each poll now asks
+  for the next page and wraps around after six, so freshly indexed images keep arriving:
+  verified `start=1 → 11 → 21` across three polls, with the "🆕 3 new wallpapers — see them" pill raised.
+- **Google is polled every 20 minutes, not every 150 s.** The free Custom Search tier allows 100 queries a
+  day; 150 s would burn it in about four hours. 20 minutes ≈ 72 queries/day, leaving headroom.
+- **Quota is not a fault.** A 403/429 whose body says quota / rate limit / daily limit now pauses that
+  source for an hour instead of counting as a failure, so it no longer gets marked dead and removed.
+  Verified: with the endpoint answering `dailyLimitExceeded`, the Google chip stayed in the row and the
+  rest of the feed was unaffected.
+- Nothing else changed: same single chip row, same 4,487 Wikimedia wallpapers, same credits.
+
 ## v5.2.0 — 2026-11-03
 **Google Images added — through Google's official Custom Search API, licence-filtered**
 - New 12th source, **Google Images**. It does not scrape google.com/images (that breaks Google's terms and
