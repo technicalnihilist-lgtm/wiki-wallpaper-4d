@@ -3,6 +3,24 @@
 Every change below keeps the UI, layout, wording and features exactly as they are.
 Only correctness, stability and speed change.
 
+## v5.2.0 — 2026-11-03
+**Google Images added — through Google's official Custom Search API, licence-filtered**
+- New 12th source, **Google Images**. It does not scrape google.com/images (that breaks Google's terms and
+  would pull in all-rights-reserved pictures with no licence); it uses the documented **Custom Search JSON
+  API** with `searchType=image` and `rights=cc_publicdomain,cc_attribute,cc_sharealike`, i.e. the same
+  "Usage rights" filter Google Images offers. Only Creative Commons / public-domain results come through.
+- Google returns no per-image licence text and no creator, so those items honestly show
+  **"Unknown creator"**, a licence line of "CC / PD (Google filter)" and a **View original** link to the page
+  the image was found on. Nothing is invented.
+- Two credentials are needed (API key + search engine ID / CX) and both are entered in
+  **Settings → 🌐 Image sources**; the source stays hidden until both are present, exactly like the other
+  key-gated sources. Free tier is 100 queries/day.
+- Verified with a stubbed Custom Search response: the chip appears once both credentials exist, items render
+  with correct resolution and credit rows, the settings section now shows 6 key fields (4 single-key sources
+  + 2 for Google) and the run finished with 0 console errors. The fetch path was also checked against the
+  live `www.googleapis.com` endpoint (reachable; without a key it answers 400, which the source treats as a
+  failure and removes itself as usual).
+
 ## v5.1.1 — 2026-11-03
 **All chips on one line**
 - The two chip rows (image sources on top, categories below) are now a **single scrollable row**:
