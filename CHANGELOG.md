@@ -3,6 +3,36 @@
 Every change below keeps the UI, layout, wording and features exactly as they are.
 Only correctness, stability and speed change.
 
+## v4.9.2 — 2026-11-03
+**Performance pass: the image pipeline was effectively serial, and interaction paths thrashed layout**
+- **The loader never reached its own concurrency.** `pumpImgs()` starts one image per tick and expects
+  the gap timer to schedule the next tick, but it never re-armed it — so a new image only started when
+  a previous one *finished*. Six parallel requests were configured, one was used.
+- **`loading="lazy"` fought the loader.** The app sets `img.src` itself when a card should load, but the
+  attribute made the browser silently defer the fetch for cards outside the viewport; those requests
+  never fired `load`/`error`, their six slots stayed occupied and the queue starved — visible cards sat
+  on grey shimmer with 40+ images queued. The attribute is gone from grid images (the app owns loading).
+- **Cards now load by proximity.** An IntersectionObserver (800 px band) decides when a card may fetch;
+  cards outside it get `.far`, which stops their shimmer animation and drops its composited layer. Before,
+  every card ever rendered kept a decoded bitmap *and* a running animation.
+- **Visible cards are fetched first.** A high-priority FIFO queue serves the cards on screen in document
+  order; the rest wait behind them.
+- **Forced synchronous layout removed from every interaction path.** The card tilt measured its own rect
+  on every pointer frame, the header icon measured itself on every mouse move anywhere in the app, the
+  modal photo did the same, `checkSentinel()` read layout on every scroll frame and a 900 ms watchdog read
+  `scrollHeight`. All geometry is now cached and invalidated on scroll/resize, and the sentinel check is
+  limited to one layout read per 150 ms with a trailing check.
+- `renderChunk()` inserts a whole chunk with one `DocumentFragment` instead of 18 separate appends, and
+  observers are attached after insertion; `updateMoreBtn()` writes to the DOM only when its label changes.
+- Measured (deterministic harness, ~500 cards, images stubbed): style recalc **21,702 ms → 2,543 ms**,
+  total long-task time **111,407 ms → 68,298 ms**, pointer-tilt long tasks **36,858 ms → 14,925 ms**
+  (style 8,823 → 338 ms), modal open/close layout **420 ms → 33 ms**, settings panel style 117 → 18 ms.
+  Real CDN after a fast 18,000 px scroll: images loaded **45 → 133** (3×), 0 × HTTP 429, 0 failed requests.
+- Visual regression: pixel-identical first screen and wallpaper preview (0 px difference), 0.04 % on the
+  settings panel / light theme (five off-screen cards that are now intentionally not pre-loaded).
+  Layout, colours, spacing, wording, icons, animations, glass effects and the 2,322 embedded wallpapers
+  are untouched. Full detail in `PERF-REPORT.md`.
+
 ## v4.9.1 — 2026-11-03
 **"🆕 Naye" kept showing the same wallpapers, and kept calling them new**
 - **Same images announced again and again.** The "new wallpapers" pill and the refresh button dedupe with
