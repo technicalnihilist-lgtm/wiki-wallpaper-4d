@@ -91,6 +91,13 @@ html.nobg .bg-layer,html.nobg .blob{display:none}
 .chips{position:relative;display:flex;gap:2px;overflow-x:auto;padding:3px;margin-top:10px;border-radius:99px;background:rgba(var(--ink-rgb),.09);scrollbar-width:none}
 .chips::-webkit-scrollbar{display:none}
 .chips>button{padding:8px 14px}
+.chips.srcs{margin-top:6px;background:rgba(var(--ink-rgb),.06)}
+.chips.srcs>button{padding:6px 11px;font-size:12px}
+.krow{display:flex;gap:8px;align-items:center;padding:2px 0 8px}
+.krow input{flex:1;height:32px;border-radius:10px;padding:0 10px;font:inherit;font-size:12px;
+  color:var(--text);background:rgba(var(--ink-rgb),.1);border:0;outline:none;
+  box-shadow:inset 0 1px 2px rgba(0,0,0,.2),inset 0 0 0 .5px rgba(var(--ink-rgb),.1)}
+.krow a{font-size:11px;white-space:nowrap}
 
 /* ---------- Grid + 3D cards ---------- */
 main{max-width:1320px;margin:0 auto;padding:18px 14px calc(60px + env(safe-area-inset-bottom));perspective:1500px}
@@ -408,6 +415,7 @@ html.lite .pbadge{animation:none}
       </button>
     </div>
     <div class="chips" id="chips"></div>
+    <div class="chips srcs" id="srcs"></div>
   </header>
 </div>
 
@@ -683,7 +691,7 @@ function norm(d){
     original:origOf(d.th),w:d.w,h:d.h,desc:d.d||'',cat:d.c||''};
 }
 const creditShort=d=>'© '+d.artist+' · '+d.license;
-const creditText=d=>'"'+d.title+'" by '+d.artist+', via Wikimedia Commons ('+d.page+'), licensed '+d.license+(d.licenseUrl?' — '+d.licenseUrl:'')+'.';
+const creditText=d=>'"'+d.title+'" by '+d.artist+', via '+(d.srcName||'Wikimedia Commons')+' ('+d.page+'), licensed '+d.license+(d.licenseUrl?' — '+d.licenseUrl:'')+'.';
 let ALLNORM=null;
 const allNorm=()=>ALLNORM||(ALLNORM=WALLS.map(norm));
 
@@ -908,12 +916,14 @@ function showStatus(kind,msg){
 let metaSig='';
 function updateMeta(){
   const on=!!(S.live&&navigator.onLine);
-  const sig=[pool.length,on,mode,term,lastSync?Math.floor((Date.now()-lastSync)/60000):'x'].join('|');
+  const sig=[pool.length,on,mode,term,feedMode,mcat,lastSync?Math.floor((Date.now()-lastSync)/60000):'x'].join('|');
   if(sig===metaSig)return;
   metaSig=sig;
   const ago=lastSync?Math.max(0,Math.round((Date.now()-lastSync)/60000)):null;
-  const label=mode==='fresh'?t('src_fresh')
-    :(term?t('src_search',{q:term}):t('src_note'));
+  const label=feedMode==='fav'?'♥ Favourites'
+    :(feedMode!=='wiki'
+      ?((feedMode==='all'?'All 11 sources':((SRCBY[feedMode]||{}).name||''))+(mcat?' · '+mcat:'')+(term?' · "'+term+'"':''))
+      :(mode==='fresh'?t('src_fresh'):(term?t('src_search',{q:term}):t('src_note'))));
   const bits=[
     el('b',{},t('wp_n',{n:pool.length.toLocaleString('en-IN')})),
     el('span',{class:'dot'},'·'),
@@ -999,6 +1009,12 @@ async function loadLive(){
   }
 }
 function more(){
+  if(feedMode!=='wiki'){
+    if(pos<pool.length){renderChunk(18);setTimeout(checkSentinel,80);return}
+    if(!mloading&&navigator.onLine){multiLoad(false);return}
+    if(!mloading)showStatus(pool.length?'end':'empty');
+    return;
+  }
   if(pos<pool.length){renderChunk(18);setTimeout(checkSentinel,80);return}
   if(mode==='fresh'){
     if(freshCont&&!loading&&navigator.onLine)loadFreshPage();
@@ -1051,6 +1067,13 @@ function start(t){
   if(io)io.disconnect();
   clearGrid();actCard=null;
   scrollTo(0,0);
+  if(feedMode!=='wiki'){
+    mode=(feedMode==='fav')?'fav':'search';
+    multiReset();mseen=new Set();
+    showStatus('');
+    if(feedMode==='fav')favLoad();else multiLoad(true);
+    return;
+  }
   if(mode==='fresh'){
     showStatus('');
     if(navigator.onLine&&S.live)loadFreshPage();
@@ -1067,6 +1090,367 @@ function start(t){
   }
 }
 
+
+/* ================= multi-source wallpaper engine =================
+   11 additional sources, all through their official APIs. Wikimedia stays exactly as it was.
+   Every source returns the same item shape the grid/modal already understand, plus
+   artistUrl / srcName / srcHome so the credit block can link back to the creator. */
+
+const SRC_DEFS=[
+ {id:'openverse',  name:'Openverse',           home:'https://openverse.org/',                  key:0, lic:'CC / Public Domain'},
+ {id:'flickr',     name:'Flickr CC',           home:'https://www.flickr.com/creativecommons/', key:1, keyUrl:'https://www.flickr.com/services/apps/create/', lic:'CC BY / BY-SA / CC0'},
+ {id:'nasa',       name:'NASA Images',         home:'https://images.nasa.gov/',                key:0, lic:'Public Domain (NASA)'},
+ {id:'smithsonian',name:'Smithsonian',         home:'https://www.si.edu/openaccess',           key:1, keyUrl:'https://api.data.gov/signup/', lic:'CC0'},
+ {id:'rijks',      name:'Rijksmuseum',         home:'https://www.rijksmuseum.nl/',             key:1, keyUrl:'https://data.rijksmuseum.nl/object-metadata/api/', lic:'Public Domain'},
+ {id:'cleveland',  name:'Cleveland Museum',    home:'https://www.clevelandart.org/',           key:0, lic:'CC0'},
+ {id:'artic',      name:'Art Institute Chicago',home:'https://www.artic.edu/',                 key:0, lic:'CC0'},
+ {id:'europeana',  name:'Europeana',           home:'https://www.europeana.eu/',               key:1, keyUrl:'https://pro.europeana.eu/page/get-api', lic:'CC0 / PD / CC BY'},
+ {id:'loc',        name:'Library of Congress', home:'https://www.loc.gov/pictures/',           key:0, lic:'Public Domain'},
+ {id:'archive',    name:'Internet Archive',    home:'https://archive.org/',                    key:0, lic:'CC / Public Domain'},
+ {id:'met',        name:'The Met',             home:'https://www.metmuseum.org/',              key:0, lic:'Public Domain (CC0)'}
+];
+const SRCBY={};SRC_DEFS.forEach(d=>SRCBY[d.id]=d);
+
+/* which sources are switched on (all of them by default; Wikimedia is always on) */
+const SRC_ON=(()=>{try{const a=JSON.parse(localStorage.getItem('ww_src')||'null');
+  if(Array.isArray(a))return new Set(a);}catch(e){}return new Set(SRC_DEFS.map(d=>d.id));})();
+const saveSrcOn=()=>{try{localStorage.setItem('ww_src',JSON.stringify([...SRC_ON]))}catch(e){}};
+const KEYS=(()=>{try{return JSON.parse(localStorage.getItem('ww_keys')||'{}')}catch(e){return{}}})();
+const saveKeys=()=>{try{localStorage.setItem('ww_keys',JSON.stringify(KEYS))}catch(e){}};
+
+/* ---- tiny HTTP helper: timeout, per-host back-off on 429/503, JSON only ---- */
+const hostUntil={};
+async function getJSON(url,ms){
+  let host='?';try{host=new URL(url).host}catch(e){}
+  if(hostUntil[host]&&Date.now()<hostUntil[host])throw new Error('rate-limited');
+  const ac=('AbortController'in window)?new AbortController():null;
+  const t=setTimeout(()=>{try{ac.abort()}catch(e){}},ms||9000);
+  try{
+    const r=await fetch(url,{signal:ac?ac.signal:undefined,mode:'cors',credentials:'omit',referrerPolicy:'no-referrer'});
+    if(r.status===429||r.status===503){hostUntil[host]=Date.now()+90000;throw new Error('HTTP '+r.status)}
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    return await r.json();
+  }finally{clearTimeout(t)}
+}
+const stripTags=h=>String(h||'').replace(/<[^>]*>/g,' ').replace(/&[a-z]+;/gi,' ').replace(/\s+/g,' ').trim();
+const firstOf=v=>Array.isArray(v)?v[0]:v;
+const yearOf=d=>{const m=String(d||'').match(/\d{4}/);return m?m[0]:''};
+
+/* ---- licence gate: only redistribute-friendly licences ---- */
+function licenceOk(name,url){
+  const n=(String(name||'')+' '+String(url||'')).toLowerCase();
+  if(!n.trim())return false;
+  if(/by-nc|by-nd|noncommercial|noderiv|nd\b/.test(n))return false;
+  return /(cc0|cc-0|publicdomain|public domain|pdm|by-sa|by\/|creativecommons\.org\/licenses\/by|^by$|cc by|mark)/.test(n);
+}
+function licenceLabel(name,url){
+  const n=String(name||'').toLowerCase();
+  if(/cc0|zero/.test(n))return 'CC0 1.0';
+  if(/pdm|publicdomain|public domain/.test(n))return 'Public Domain';
+  const m=n.match(/by(-sa)?[ -]?([0-9.]+)?/);
+  if(m)return 'CC BY'+((m[1]?'-SA':'')+' '+(m[2]||'')).trim().replace(/\s+$/,'');
+  return name||'See source';
+}
+
+/* ---- unified item factory ---- */
+function mkItem(o){
+  const d=SRCBY[o.src]||{};
+  const w=o.w||0,h=o.h||0;
+  return {id:o.src+':'+o.id,src:o.src,srcName:d.name||o.src,srcHome:d.home||'',
+    title:(o.title||'Untitled').slice(0,120),artist:o.artist||'Unknown creator',artistUrl:o.artistUrl||'',
+    license:o.license||'See source',licenseUrl:o.licenseUrl||'',
+    page:o.page||d.home||'',thumb:o.thumb,original:o.original||o.thumb,
+    w:w||1200,h:h||1600,desc:o.desc||'',date:o.date||'',size:o.size||0,cat:o.cat||d.name||'Wallpaper'};
+}
+
+/* ---- per-source fetchers: (query, page) -> {items, more} ---- */
+const FEED={
+  async openverse(q,page){
+    const u='https://api.openverse.org/v1/images/?q='+encodeURIComponent(q||'wallpaper')+
+      '&page='+page+'&page_size=20&license=cc0,pdm,by,by-sa&mature=false';
+    const j=await getJSON(u);
+    const items=(j.results||[]).map(r=>{
+      const lic=licenceLabel(r.license,r.license_url);
+      if(!licenceOk(r.license,r.license_url))return null;
+      return mkItem({id:r.id,src:'openverse',title:stripTags(r.title),artist:r.creator||'',
+        artistUrl:r.creator_url||'',page:r.foreign_landing_url||'',thumb:r.thumbnail||r.url,
+        original:r.url,w:r.width,h:r.height,license:lic,licenseUrl:r.license_url||'',
+        date:(r.indexed_on||'').slice(0,10),cat:r.category||''});
+    }).filter(Boolean);
+    return {items,more:items.length>=20};
+  },
+  async flickr(q,page){
+    const k=KEYS.flickr;if(!k)throw new Error('api key needed');
+    const u='https://api.flickr.com/services/rest/?method=flickr.photos.search&api_key='+encodeURIComponent(k)+
+      '&text='+encodeURIComponent(q||'wallpaper')+'&license=4,5,9,10&content_type=1&media=photos&safe_search=1'+
+      '&extras=url_m,url_l,url_c,owner_name,path_alias,license,date_upload&per_page=24&page='+page+
+      '&sort=relevance&format=json&nojsoncallback=1';
+    const j=await getJSON(u);
+    if(j.stat==='fail')throw new Error((j.message||'flickr error').slice(0,60));
+    const items=((j.photos&&j.photos.photo)||[]).map(p=>{
+      const lic={4:'CC BY 2.0',5:'CC BY-SA 2.0',9:'CC0 1.0',10:'Public Domain Mark'}[p.license];
+      if(!lic)return null;
+      const full=p.url_l||p.url_c||p.url_m;
+      if(!full)return null;
+      return mkItem({id:p.id,src:'flickr',title:p.title,artist:p.ownername||'',
+        artistUrl:p.owner?'https://www.flickr.com/photos/'+p.owner+'/':'',
+        page:'https://www.flickr.com/photos/'+(p.owner||'')+'/'+p.id,
+        thumb:p.url_m||full,original:full,w:0,h:0,
+        license:lic,licenseUrl:'https://creativecommons.org/licenses/'+
+          (p.license==='4'?'by/2.0/':p.license==='5'?'by-sa/2.0/':p.license==='9'?'publicdomain/zero/1.0/':'publicdomain/mark/1.0/'),
+        date:p.dateupload?new Date(p.dateupload*1000).toISOString().slice(0,10):''});
+    }).filter(Boolean);
+    return {items,more:items.length>=20};
+  },
+  async nasa(q,page){
+    const u='https://images-api.nasa.gov/search?q='+encodeURIComponent(q||'galaxy')+
+      '&media_type=image&page='+page+'&page_size=20';
+    const j=await getJSON(u);
+    const items=(((j.collection||{}).items)||[]).map(it=>{
+      const d=(it.data||[])[0];if(!d)return null;
+      const thumb=firstOf(((it.links||[])[0]||{}).href)||'';
+      if(!thumb)return null;
+      const id=d.nasa_id;
+      return mkItem({id:id,src:'nasa',title:stripTags(d.title),artist:d.photographer||d.center||'NASA',
+        artistUrl:'',page:'https://images.nasa.gov/details/'+encodeURIComponent(id),
+        thumb:thumb,original:'https://images-assets.nasa.gov/image/'+encodeURIComponent(id)+'/'+encodeURIComponent(id)+'~orig.jpg',
+        w:0,h:0,license:'Public Domain (NASA)',licenseUrl:'https://www.nasa.gov/nasa-brand-center/images-and-media/',
+        desc:stripTags(d.description).slice(0,300),date:(d.date_created||'').slice(0,10)});
+    }).filter(Boolean);
+    return {items,more:items.length>=20};
+  },
+  async smithsonian(q,page){
+    const k=KEYS.smithsonian;if(!k)throw new Error('api key needed');
+    const rows=20,start=(page-1)*rows;
+    const u='https://api.si.edu/openaccess/api/v1.0/search?api_key='+encodeURIComponent(k)+
+      '&q='+encodeURIComponent((q||'painting')+' AND online_media_type:"Images"')+'&rows='+rows+'&start='+start;
+    const j=await getJSON(u);
+    const items=(((j.response||{}).rows)||[]).map(r=>{
+      const c=r.content||{},dn=c.descriptiveNonRepeating||{};
+      const media=((dn.online_media||{}).media||[])[0];if(!media)return null;
+      const src=media.content||(media.resources&&media.resources[0]&&media.resources[0].url)||'';
+      if(!src)return null;
+      const name=(((c.freetext||{}).name)||[])[0];
+      return mkItem({id:r.id,src:'smithsonian',title:stripTags((dn.title||{}).content||r.title),
+        artist:name?stripTags(name.content):'Smithsonian',artistUrl:'',page:dn.record_link||('https://www.si.edu/object/'+r.id),
+        thumb:src,original:src,w:0,h:0,license:'CC0 1.0',licenseUrl:'https://creativecommons.org/publicdomain/zero/1.0/',
+        desc:stripTags((dn.description||{}).content||'').slice(0,300),date:yearOf((c.indexedStructured||{}).date)});
+    }).filter(Boolean);
+    return {items,more:items.length>=rows};
+  },
+  async rijks(q,page){
+    const k=KEYS.rijks;if(!k)throw new Error('api key needed');
+    const u='https://www.rijksmuseum.nl/api/en/collection?key='+encodeURIComponent(k)+
+      '&q='+encodeURIComponent(q||'painting')+'&imgonly=True&ps=20&p='+page+'&s=relevance';
+    const j=await getJSON(u);
+    const items=(j.artObjects||[]).map(o=>{
+      const img=(o.webImage||{}).url;if(!img)return null;
+      return mkItem({id:o.objectNumber,src:'rijks',title:stripTags(o.title),artist:stripTags(o.principalOrFirstMaker),
+        artistUrl:'',page:(o.links||{}).web||('https://www.rijksmuseum.nl/en/collection/'+o.objectNumber),
+        thumb:img,original:img,w:0,h:0,license:'Public Domain',
+        licenseUrl:'https://creativecommons.org/publicdomain/mark/1.0/',date:yearOf(o.longTitle)});
+    }).filter(Boolean);
+    return {items,more:items.length>=20};
+  },
+  async cleveland(q,page){
+    const u='https://openaccess-api.clevelandart.org/api/artworks/?q='+encodeURIComponent(q||'painting')+
+      '&has_image=1&cc0=1&limit=20&skip='+((page-1)*20);
+    const j=await getJSON(u);
+    const items=(j.data||[]).map(a=>{
+      const img=((a.images||{}).web||{}).url||((a.images||{}).print||{}).url;if(!img)return null;
+      if(String(a.share_license_status||'').toUpperCase()!=='CC0')return null;
+      const cr=(a.creators||[])[0]||{};
+      return mkItem({id:a.id,src:'cleveland',title:stripTags(a.title),artist:stripTags(cr.description)||'Cleveland Museum of Art',
+        artistUrl:'',page:a.url||('https://www.clevelandart.org/art/'+a.accession_number),
+        thumb:img,original:((a.images||{}).print||{}).url||img,w:0,h:0,
+        license:'CC0 1.0',licenseUrl:'https://creativecommons.org/publicdomain/zero/1.0/',
+        desc:stripTags(a.wall_description||a.description||'').slice(0,300),date:yearOf(a.creation_date)});
+    }).filter(Boolean);
+    return {items,more:items.length>=20};
+  },
+  async artic(q,page){
+    const s=await getJSON('https://api.artic.edu/api/v1/artworks/search?q='+encodeURIComponent(q||'painting')+
+      '&page='+page+'&limit=20&fields=id');
+    const ids=((s.data||[]).map(d=>d.id)).slice(0,20);
+    if(!ids.length)return {items:[],more:false};
+    const j=await getJSON('https://api.artic.edu/api/v1/artworks?ids='+ids.join(',')+
+      '&fields=id,title,image_id,artist_title,artist_display,is_public_domain,date_display,thumbnail');
+    const iiif=(j.config||{}).iiif_url||'https://www.artic.edu/iiif/2';
+    const items=(j.data||[]).map(a=>{
+      if(!a.image_id||a.is_public_domain===false)return null;
+      return mkItem({id:a.id,src:'artic',title:stripTags(a.title),artist:stripTags(a.artist_title)||'Art Institute of Chicago',
+        artistUrl:'',page:'https://www.artic.edu/artworks/'+a.id,
+        thumb:iiif+'/'+a.image_id+'/full/600,/0/default.jpg',
+        original:iiif+'/'+a.image_id+'/full/1686,/0/default.jpg',w:0,h:0,
+        license:'CC0 1.0',licenseUrl:'https://creativecommons.org/publicdomain/zero/1.0/',
+        desc:stripTags(a.artist_display||'').slice(0,300),date:yearOf(a.date_display)});
+    }).filter(Boolean);
+    return {items,more:ids.length>=20};
+  },
+  async europeana(q,page){
+    const k=KEYS.europeana;if(!k)throw new Error('api key needed');
+    const u='https://api.europeana.eu/record/v2/search.json?wskey='+encodeURIComponent(k)+
+      '&query='+encodeURIComponent(q||'painting')+'&qf=TYPE:IMAGE&media=true&thumbnail=true&rows=20&start='+((page-1)*20)+'&profile=rich';
+    const j=await getJSON(u);
+    const items=(j.items||[]).map(r=>{
+      const rights=String(firstOf(r.rights)||'');
+      if(!licenceOk('',rights))return null;
+      const full=firstOf(r.edmIsShownBy)||firstOf(r.edmPreview)||'';
+      const thumb=firstOf(r.edmPreview)||full;if(!full)return null;
+      return mkItem({id:r.id,src:'europeana',title:stripTags(firstOf(r.title)),artist:stripTags(firstOf(r.dcCreator))||stripTags(firstOf(r.dataProvider))||'Europeana',
+        artistUrl:'',page:r.guid||'',thumb:thumb,original:full,w:0,h:0,
+        license:licenceLabel('',rights),licenseUrl:rights,
+        desc:stripTags(firstOf(r.dcDescription)||'').slice(0,300),date:yearOf(firstOf(r.year))});
+    }).filter(Boolean);
+    return {items,more:items.length>=20};
+  },
+  async loc(q,page){
+    const u='https://www.loc.gov/pictures/search/?q='+encodeURIComponent(q||'landscape')+
+      '&fo=json&c=24&sp='+page;
+    const j=await getJSON(u);
+    const items=(j.results||[]).map(r=>{
+      const im=r.image||{};
+      const thumb=im.thumb||im.full;if(!thumb)return null;
+      const page_=r.id?('https://www.loc.gov'+r.id):'https://www.loc.gov/pictures/';
+      return mkItem({id:r.id||thumb,src:'loc',title:stripTags(r.title),artist:stripTags(r.contributor||r.creator||'')||'Library of Congress',
+        artistUrl:'',page:page_,thumb:thumb,original:im.full||thumb,w:0,h:0,
+        license:'Public Domain',licenseUrl:'https://www.loc.gov/legal/',
+        desc:stripTags(r.description||'').slice(0,300),date:yearOf(r.date)});
+    }).filter(Boolean);
+    return {items,more:items.length>=24};
+  },
+  async archive(q,page){
+    /* only items that carry an explicit Creative Commons licence: the open archive is full of
+       unrelated uploads, and an unlicensed item cannot be redistributed */
+    const u='https://archive.org/advancedsearch.php?q='+encodeURIComponent('('+(q||'landscape')+') AND mediatype:image AND licenseurl:*creativecommons*')+
+      '&fl%5B%5D=identifier&fl%5B%5D=title&fl%5B%5D=creator&fl%5B%5D=licenseurl&fl%5B%5D=publicdate'+
+      '&rows=24&page='+page+'&output=json&sort%5B%5D=publicdate+desc';
+    const j=await getJSON(u);
+    const docs=((j.response||{}).docs)||[];
+    const items=docs.map(d=>{
+      const lic=String(d.licenseurl||'');
+      if(lic&&!licenceOk('',lic))return null;
+      const thumb='https://archive.org/services/img/'+encodeURIComponent(d.identifier);
+      return mkItem({id:d.identifier,src:'archive',title:stripTags(firstOf(d.title)),artist:stripTags(firstOf(d.creator))||'Internet Archive',
+        artistUrl:'',page:'https://archive.org/details/'+d.identifier,thumb:thumb,original:thumb,w:0,h:0,
+        license:lic?licenceLabel('',lic):'Public Domain / see item page',
+        licenseUrl:lic||'https://archive.org/about/terms.php',
+        date:(firstOf(d.publicdate)||'').slice(0,10)});
+    }).filter(Boolean);
+    return {items,more:docs.length>=24};
+  },
+  async met(q,page){
+    const s=await getJSON('https://collectionapi.metmuseum.org/public/collection/v1/search?hasImages=true&q='+
+      encodeURIComponent(q||'painting'));
+    const all=s.objectIDs||[];
+    const slice=all.slice((page-1)*12,page*12);
+    if(!slice.length)return {items:[],more:false};
+    const got=await Promise.all(slice.map(id=>
+      getJSON('https://collectionapi.metmuseum.org/public/collection/v1/objects/'+id).catch(()=>null)));
+    const items=got.map(o=>{
+      if(!o||!o.primaryImage||o.isPublicDomain===false)return null;
+      return mkItem({id:o.objectID,src:'met',title:stripTags(o.title),artist:stripTags(o.artistDisplayName)||'The Met',
+        artistUrl:o.artistULAN_URL||'',page:o.objectURL||'',thumb:o.primaryImageSmall||o.primaryImage,
+        original:o.primaryImage,w:0,h:0,license:'CC0 1.0',
+        licenseUrl:'https://creativecommons.org/publicdomain/zero/1.0/',
+        desc:stripTags([o.medium,o.department].filter(Boolean).join(' · ')).slice(0,300),date:yearOf(o.objectDate)});
+    }).filter(Boolean);
+    return {items,more:page*12<all.length};
+  }
+};
+
+/* which sources answer for the current filter */
+function activeSources(){
+  const list=[];
+  if(feedMode==='wiki')return list;
+  if(feedMode==='fav')return list;
+  if(feedMode==='all'){SRC_DEFS.forEach(d=>{if(SRC_ON.has(d.id))list.push(d)})}
+  else if(SRCBY[feedMode]){list.push(SRCBY[feedMode])}
+  return list;
+}
+
+
+/* ---- feed state for the multi-source mode ---- */
+let feedMode='wiki';                 /* 'wiki' | 'all' | <source id> | 'fav' */
+let mcat='',mcur={},mloading=false,msrcDone={},seenURLs=new Set(),mseen=new Set();
+const CATS15=[
+ ['Nature','nature landscape'],['Mountains','mountains'],['Space & Galaxy','galaxy nebula'],
+ ['Ocean','ocean waves'],['Animals','wildlife animals'],['Flowers','flowers'],
+ ['Cars & Bikes','cars motorcycles'],['Architecture','architecture'],['Minimal & Abstract','minimal abstract'],
+ ['Digital Art','digital art'],['Vintage Photography','vintage photograph'],['Paintings','painting'],
+ ['Indian Culture','india culture'],['Dark AMOLED','dark amoled'],['Illustrations','illustration']
+];
+const catQuery=c=>{const f=CATS15.find(x=>x[0]===c);return f?f[1]:(c||'wallpaper')};
+const urlKey=u=>String(u||'').split('?')[0].toLowerCase().replace(/^https?:\/\//,'');
+
+/* ---- favourites (stored with their credit so they survive offline) ---- */
+const FAVS=(()=>{try{const a=JSON.parse(localStorage.getItem('ww_favs')||'[]');return Array.isArray(a)?a:[]}catch(e){return[]}})();
+const saveFavs=()=>{try{localStorage.setItem('ww_favs',JSON.stringify(FAVS.slice(-300)))}catch(e){}};
+const isFav=d=>!!d&&FAVS.some(x=>x.id===d.id);
+function toggleFav(d){
+  const i=FAVS.findIndex(x=>x.id===d.id);
+  if(i>=0)FAVS.splice(i,1);else FAVS.push(d);
+  saveFavs();toast(i>=0?'Removed from favourites':'♥ Saved to favourites');
+  if(feedMode==='fav')favLoad();
+}
+
+function multiReset(){pool=[];pos=0;mcur={};msrcDone={};seenURLs=new Set()}
+
+async function multiLoad(reset){
+  if(mloading)return;
+  const my=token;
+  const srcs=activeSources();
+  if(!srcs.length){showStatus('empty');return}
+  mloading=true;
+  if(reset)showStatus('loading');
+  const qs=mcat?catQuery(mcat):(term||'wallpaper');
+  const results=await Promise.all(srcs.map(d=>{
+    const page=reset?1:(mcur[d.id]||1);
+    if(!reset&&msrcDone[d.id])return Promise.resolve({id:d.id,items:[],more:false});
+    return FEED[d.id](qs,page).then(r=>({id:d.id,items:r.items||[],more:!!r.more}))
+      .catch(e=>({id:d.id,items:[],more:false,err:String(e&&e.message||e)}));
+  }));
+  if(my!==token){mloading=false;return}
+  let added=0;
+  const maxLen=Math.max(0,...results.map(r=>r.items.length));
+  for(let i=0;i<maxLen;i++)for(const r of results){          /* interleave: mixed feed, not one source at a time */
+    const it=r.items[i];if(!it)continue;
+    const k=urlKey(it.original);
+    if(mseen.has(it.id)||(k&&seenURLs.has(k)))continue;
+    mseen.add(it.id);if(k)seenURLs.add(k);markOffered(it);
+    pool.push(it);added++;
+  }
+  for(const r of results){if(r.more)mcur[r.id]=(mcur[r.id]||1)+1;else msrcDone[r.id]=1}
+  const allDone=results.every(r=>!r.more);
+  mloading=false;
+  if(reset&&!pool.length){showStatus('empty')}
+  else{renderChunk(reset?pool.length:added);showStatus(allDone&&pos>=pool.length?'end':'')}
+  updateMeta();
+}
+
+/* live: newest of the current query, offered as "new wallpapers" */
+async function multiCheckFresh(){
+  if(!S.live||!navigator.onLine||refreshing||isOpen||mloading||feedMode==='fav')return;
+  if(document.hidden)return;
+  const srcs=activeSources();if(!srcs.length)return;
+  const qs=mcat?catQuery(mcat):(term||'wallpaper');
+  const res=await Promise.all(srcs.map(d=>FEED[d.id](qs,1).catch(()=>null)));
+  const fresh=[];
+  for(const r of res){if(!r)continue;for(const it of (r.items||[]).slice(0,4)){
+    if(isOffered(it))continue;const k=urlKey(it.original);
+    if(k&&seenURLs.has(k))continue;fresh.push(it);
+  }}
+  lastSync=Date.now();
+  if(fresh.length){pendingFresh=fresh;showNewPill(fresh.length)}
+  updateMeta();
+}
+
+function favLoad(){
+  pool=FAVS.slice().reverse();pos=0;
+  renderChunk(pool.length);
+  showStatus(pool.length?'':'empty');
+  updateMeta();
+}
 
 /* ================= i18n ================= */
 const I18N={"en": {"search_ph": "Search: mountain, sunset, galaxy, photographer…", "credits": "Credits", "all": "All", "naye": "🆕 New", "live": "● Live", "offline": "○ Offline", "wp_n": "{n} wallpapers", "src_note": "all from Wikimedia Commons, with credit", "src_search": "\"{q}\" · all from Wikimedia Commons", "src_fresh": "newest uploads from Wikimedia Commons", "synced_now": "synced just now", "synced_ago": "synced {n} min ago", "st_loading": "Fetching more wallpapers from Wikimedia…", "st_empty": "😕 Nothing found — try another keyword or filter", "st_end": "✨ That's all! Try another category or search", "st_error": "Could not reach Wikimedia", "more_left": "{n} more wallpapers ↓", "more_live": "Load more from Wikimedia ↓", "pull_hint": "Pull down for the latest wallpapers", "pull_ready": "Release to refresh!", "pull_busy": "Fetching the latest wallpapers…", "new_pill": "🆕 {n} new wallpapers — see them", "t_fresh": "✨ {n} new wallpapers added", "t_uptodate": "✅ Already up to date", "t_offline": "📴 Offline — showing saved wallpapers", "t_neterr": "⚠️ Could not reach Wikimedia", "t_online": "🌐 Back online", "t_copied": "✅ Credit copied", "t_copied_n": "✅ {n} credits copied", "t_txt": "⬇ Credits file downloaded", "t_dl": "✅ Downloaded — don't forget the credit!", "t_dlblock": "Download was blocked. Open the image and long-press to save it.", "t_reset": "Settings reset", "tab_info": "Info", "tab_credit": "Credit", "tab_use": "Set wallpaper", "dl_hd": "⬇ Download HD", "dl_orig": "⬇ Original", "fs_btn": "⛶ Fullscreen", "k_artist": "Photographer / Artist", "k_res": "Resolution", "k_cat": "Category", "k_size": "File size", "k_date": "Date", "k_license": "License", "k_source": "Source", "src_page": "Wikimedia Commons page ↗", "credit_note": "This image belongs to {artist} under {lic}. Keep the credit line above when you share or repost it.", "copy_credit": "📋 Copy credit", "all_credits": "📜 All credits", "fs_exit": "⤡ Exit", "fs_fill": "◻ Fill", "fs_fit": "◱ Fit", "cr_title": "📜 Credits", "cr_ph": "Search photographer, license or image…", "cr_sum": "{n} images · {m} photographers / creators · all credited", "cr_more": "Show more", "cr_copy": "📋 Copy all credits", "cr_txt": "⬇ Credits .txt", "by": "by", "license_word": "License:", "source_word": "source ↗", "sec_glass": "💎 Liquid Glass", "sec_depth": "🧊 4D Depth", "sec_anim": "🎬 Animations", "sec_walls": "🖼️ Wallpapers", "sec_look": "🎨 Appearance", "l_blur": "Blur", "l_transp": "Transparency", "l_sat": "Color boost", "l_shine": "Shine / highlights", "l_radius": "Corner roundness", "l_refract": "Liquid refraction", "l_depth": "3D tilt depth", "l_glare": "Glare / light reflection", "l_parallax": "Background parallax", "l_gyro": "Phone motion", "l_anim": "Open / close style", "l_bounce": "Bounce amount", "l_speed": "Speed", "l_orient": "Orientation", "l_minres": "Minimum quality", "l_live": "Live internet updates", "l_lite": "Performance mode", "l_size": "Grid size", "l_caps": "Show titles on cards", "l_creds": "Credit line on cards", "l_more": "Include non-featured", "l_theme": "Theme", "l_full": "Fullscreen app", "l_bg": "Live wallpaper backdrop", "reset": "Reset all settings", "l_lang": "Language", "lang_title": "🌐 Language", "lang_ph": "Search language…", "o_auto": "Auto", "o_dark": "Dark", "o_light": "Light", "o_all": "All", "o_phone": "Phone", "o_desktop": "Desktop", "o_hd": "HD", "o_fhd": "Full HD", "o_4k": "4K", "o_small": "Small", "o_medium": "Medium", "o_large": "Large", "c_flower": "Flower", "c_lighthouse": "Lighthouse", "c_orchid": "Orchid", "c_butterfly": "Butterfly", "c_dragonfly": "Dragonfly", "c_coral": "Coral", "c_architecture": "Architecture", "c_temple": "Temple", "c_waterfall": "Waterfall", "c_galaxy": "Galaxy", "c_animal": "Animal", "c_mushroom": "Mushroom", "c_glacier": "Glacier", "c_staircase": "Staircase", "c_tiger": "Tiger", "c_mountain": "Mountain", "c_sunset": "Sunset", "c_desert": "Desert", "c_nightsky": "Night sky", "c_bird": "Bird", "c_nebula": "Nebula", "c_stainedglass": "Stained glass", "c_cave": "Cave", "c_landscape": "Landscape"}, "hi": {"search_ph": "खोजें: पहाड़, सूर्यास्त, गैलेक्सी, फोटोग्राफर…", "credits": "क्रेडिट", "all": "सभी", "naye": "🆕 नए", "live": "● लाइव", "offline": "○ ऑफलाइन", "wp_n": "{n} वॉलपेपर", "src_note": "सभी Wikimedia Commons से, क्रेडिट के साथ", "src_search": "\"{q}\" · सभी Wikimedia Commons से", "src_fresh": "Wikimedia Commons से सबसे नए अपलोड", "synced_now": "अभी सिंक हुए", "synced_ago": "{n} मिनट पहले सिंक हुए", "st_loading": "Wikimedia से और वॉलपेपर लाए जा रहे हैं…", "st_empty": "😕 कुछ नहीं मिला — कोई दूसरा कीवर्ड या फिल्टर आज़माएं", "st_end": "✨ बस इतना ही! कोई दूसरी कैटेगरी या सर्च आज़माएं", "st_error": "Wikimedia तक नहीं पहुंचा जा सका", "more_left": "{n} और वॉलपेपर ↓", "more_live": "Wikimedia से और लोड करें ↓", "pull_hint": "ताज़ा वॉलपेपर के लिए नीचे खींचें", "pull_ready": "रिफ्रेश करने के लिए रिलीज़ करें!", "pull_busy": "ताज़ा वॉलपेपर लाए जा रहे हैं…", "new_pill": "🆕 {n} नए वॉलपेपर — उन्हें देखें", "t_fresh": "✨ {n} नए वॉलपेपर जोड़े गए", "t_uptodate": "✅ पहले से ही अप-टू-डेट", "t_offline": "📴 ऑफलाइन — सेव किए गए वॉलपेपर दिखा रहा है", "t_neterr": "⚠️ Wikimedia तक नहीं पहुंचा जा सका", "t_online": "🌐 वापस ऑनलाइन", "t_copied": "✅ क्रेडिट कॉपी हो गया", "t_copied_n": "✅ {n} क्रेडिट कॉपी हो गए", "t_txt": "⬇ क्रेडिट फ़ाइल डाउनलोड हो गई", "t_dl": "✅ डाउनलोड हो गया — क्रेडिट मत भूलना!", "t_dlblock": "डाउनलोड ब्लॉक हो गया। इमेज खोलें और इसे सेव करने के लिए लंबे समय तक दबाकर रखें।", "t_reset": "सेटिंग्स रीसेट", "tab_info": "जानकारी", "tab_credit": "क्रेडिट", "tab_use": "वॉलपेपर सेट करें", "dl_hd": "⬇ HD डाउनलोड करें", "dl_orig": "⬇ ओरिजिनल", "fs_btn": "⛶ फुलस्क्रीन", "k_artist": "फोटोग्राफर / आर्टिस्ट", "k_res": "रिज़ॉल्यूशन", "k_cat": "कैटेगरी", "k_size": "फ़ाइल साइज़", "k_date": "तारीख", "k_license": "लाइसेंस", "k_source": "सोर्स", "src_page": "Wikimedia Commons पेज ↗", "credit_note": "यह इमेज {lic} के तहत {artist} की है। जब आप इसे शेयर या रीपोस्ट करें तो ऊपर दी गई क्रेडिट लाइन को बनाए रखें।", "copy_credit": "📋 क्रेडिट कॉपी करें", "all_credits": "📜 सभी क्रेडिट", "fs_exit": "⤡ बाहर निकलें", "fs_fill": "◻ भरें", "fs_fit": "◱ फिट", "cr_title": "📜 क्रेडिट", "cr_ph": "फोटोग्राफर, लाइसेंस या इमेज खोजें…", "cr_sum": "{n} इमेज · {m} फोटोग्राफर / क्रिएटर · सभी को क्रेडिट दिया गया है", "cr_more": "और दिखाएं", "cr_copy": "📋 सभी क्रेडिट कॉपी करें", "cr_txt": "⬇ क्रेडिट .txt", "by": "द्वारा", "license_word": "लाइसेंस:", "source_word": "सोर्स ↗", "sec_glass": "💎 लिक्विड ग्लास", "sec_depth": "🧊 4D डेप्थ", "sec_anim": "🎬 एनिमेशन", "sec_walls": "🖼️ वॉलपेपर", "sec_look": "🎨 लुक", "l_blur": "ब्लर", "l_transp": "ट्रांसपेरेंसी", "l_sat": "कलर बूस्ट", "l_shine": "शाइन / हाइलाइट्स", "l_radius": "कॉर्नर राउंडनेस", "l_refract": "लिक्विड रिफ्रैक्शन", "l_depth": "3D टिल्ट डेप्थ", "l_glare": "ग्लेयर / लाइट रिफ्लेक्शन", "l_parallax": "बैकग्राउंड पैरालैक्स", "l_gyro": "फोन मोशन", "l_anim": "खोलें / बंद करें स्टाइल", "l_bounce": "बाउंस अमाउंट", "l_speed": "स्पीड", "l_orient": "ओरिएंटेशन", "l_minres": "मिनिमम क्वालिटी", "l_live": "लाइव इंटरनेट अपडेट", "l_lite": "परफॉरमेंस मोड", "l_size": "ग्रिड साइज़", "l_caps": "कार्ड्स पर टाइटल दिखाएं", "l_creds": "कार्ड्स पर क्रेडिट लाइन", "l_more": "नॉन-फीचर्ड शामिल करें", "l_theme": "थीम", "l_full": "फुलस्क्रीन ऐप", "l_bg": "लाइव वॉलपेपर बैकड्रॉप", "reset": "सभी सेटिंग्स रीसेट करें", "l_lang": "भाषा", "lang_title": "🌐 भाषा", "lang_ph": "सर्च भाषा…", "o_auto": "ऑटो", "o_dark": "डार्क", "o_light": "लाइट", "o_all": "सभी", "o_phone": "फोन", "o_desktop": "डेस्कटॉप", "o_hd": "HD", "o_fhd": "फुल HD", "o_4k": "4K", "o_small": "छोटा", "o_medium": "मीडियम", "o_large": "बड़ा", "c_flower": "फूल", "c_lighthouse": "लाइटहाउस", "c_orchid": "ऑर्किड", "c_butterfly": "तितली", "c_dragonfly": "ड्रैगनफ्लाई", "c_coral": "कोरल", "c_architecture": "आर्किटेक्चर", "c_temple": "मंदिर", "c_waterfall": "झरना", "c_galaxy": "गैलेक्सी", "c_animal": "जानवर", "c_mushroom": "मशरूम", "c_glacier": "ग्लेशियर", "c_staircase": "सीढ़ियां", "c_tiger": "बाघ", "c_mountain": "पहाड़", "c_sunset": "सूर्यास्त", "c_desert": "रेगिस्तान", "c_nightsky": "रात का आसमान", "c_bird": "पक्षी", "c_nebula": "नेबुला", "c_stainedglass": "रंगीन कांच", "c_cave": "गुफा", "c_landscape": "लैंडस्केप"}, "mr": {"search_ph": "शोध: पर्वत, सूर्यास्त, आकाशगंगा, फोटोग्राफर…", "credits": "क्रेडिट्स", "all": "सर्व", "naye": "🆕 नवीन", "live": "● लाईव्ह", "offline": "○ ऑफलाइन", "wp_n": "{n} वॉलपेपर्स", "src_note": "सर्व विकिमीडिया कॉमन्सवरून, क्रेडिटसह", "src_search": "\"{q}\" · सर्व विकिमीडिया कॉमन्सवरून", "src_fresh": "विकिमीडिया कॉमन्सवरून नवीन अपलोड्स", "synced_now": "आत्ताच सिंक केले", "synced_ago": "{n} मिनिटांपूर्वी सिंक केले", "st_loading": "विकिमीडियावरून आणखी वॉलपेपर्स आणत आहोत…", "st_empty": "😕 काहीही सापडले नाही — दुसरा कीवर्ड किंवा फिल्टर वापरून पहा", "st_end": "✨ एवढेच! दुसरी कॅटेगरी किंवा शोध वापरून पहा", "st_error": "विकिमीडियावर पोहोचता आले नाही", "more_left": "{n} अधिक वॉलपेपर्स ↓", "more_live": "विकिमीडियावरून आणखी लोड करा ↓", "pull_hint": "नवीनतम वॉलपेपर्ससाठी खाली ओढा", "pull_ready": "रिफ्रेश करण्यासाठी सोडा!", "pull_busy": "नवीनतम वॉलपेपर्स आणत आहोत…", "new_pill": "🆕 {n} नवीन वॉलपेपर्स — ते पहा", "t_fresh": "✨ {n} नवीन वॉलपेपर्स जोडले", "t_uptodate": "✅ आधीच अद्ययावत", "t_offline": "📴 ऑफलाइन — सेव्ह केलेले वॉलपेपर्स दाखवत आहे", "t_neterr": "⚠️ विकिमीडियावर पोहोचता आले नाही", "t_online": "🌐 पुन्हा ऑनलाइन", "t_copied": "✅ क्रेडिट कॉपी केले", "t_copied_n": "✅ {n} क्रेडिट्स कॉपी केले", "t_txt": "⬇ क्रेडिट्स फाईल डाउनलोड केली", "t_dl": "✅ डाउनलोड केले — क्रेडिट विसरू नका!", "t_dlblock": "डाउनलोड ब्लॉक केले आहे. इमेज उघडा आणि सेव्ह करण्यासाठी त्यावर दाबून धरा.", "t_reset": "सेटिंग्ज रिसेट", "tab_info": "माहिती", "tab_credit": "क्रेडिट", "tab_use": "वॉलपेपर सेट करा", "dl_hd": "⬇ HD डाउनलोड करा", "dl_orig": "⬇ मूळ", "fs_btn": "⛶ फुलस्क्रीन", "k_artist": "फोटोग्राफर / आर्टिस्ट", "k_res": "रिझोल्यूशन", "k_cat": "कॅटेगरी", "k_size": "फाईल आकार", "k_date": "तारीख", "k_license": "परवाना", "k_source": "स्रोत", "src_page": "विकिमीडिया कॉमन्स पेज ↗", "credit_note": "ही इमेज {lic} अंतर्गत {artist} ची आहे. तुम्ही ती शेअर किंवा रिपोस्ट करताना वरील क्रेडिट ओळ तशीच ठेवा.", "copy_credit": "📋 क्रेडिट कॉपी करा", "all_credits": "📜 सर्व क्रेडिट्स", "fs_exit": "⤡ बाहेर पडा", "fs_fill": "◻ भरा", "fs_fit": "◱ फिट", "cr_title": "📜 क्रेडिट्स", "cr_ph": "फोटोग्राफर, परवाना किंवा इमेज शोधा…", "cr_sum": "{n} इमेजेस · {m} फोटोग्राफर्स / क्रिएटर्स · सर्व क्रेडिटेड", "cr_more": "अधिक दाखवा", "cr_copy": "📋 सर्व क्रेडिट्स कॉपी करा", "cr_txt": "⬇ क्रेडिट्स .txt", "by": "द्वारे", "license_word": "परवाना:", "source_word": "स्रोत ↗", "sec_glass": "💎 लिक्विड ग्लास", "sec_depth": "🧊 4D डेप्थ", "sec_anim": "🎬 ॲनिमेशन्स", "sec_walls": "🖼️ वॉलपेपर्स", "sec_look": "🎨 देखावा", "l_blur": "ब्लर", "l_transp": "पारदर्शकता", "l_sat": "कलर बूस्ट", "l_shine": "चमक / हायलाइट्स", "l_radius": "कोपरा गोलपणा", "l_refract": "लिक्विड रिफ्रॅक्शन", "l_depth": "3D टिल्ट डेप्थ", "l_glare": "ग्लेअर / प्रकाशाचे परावर्तन", "l_parallax": "बॅकग्राउंड पॅरलॅक्स", "l_gyro": "फोन मोशन", "l_anim": "उघडा / बंद करा स्टाईल", "l_bounce": "बाऊन्स प्रमाण", "l_speed": "वेग", "l_orient": "दिशा", "l_minres": "किमान गुणवत्ता", "l_live": "लाईव्ह इंटरनेट अपडेट्स", "l_lite": "परफॉर्मन्स मोड", "l_size": "ग्रिड आकार", "l_caps": "कार्ड्सवर टायटल्स दाखवा", "l_creds": "कार्ड्सवर क्रेडिट ओळ", "l_more": "नॉन-फीचर्ड समाविष्ट करा", "l_theme": "थीम", "l_full": "फुलस्क्रीन ॲप", "l_bg": "लाईव्ह वॉलपेपर बॅकड्रॉप", "reset": "सर्व सेटिंग्ज रिसेट करा", "l_lang": "भाषा", "lang_title": "🌐 भाषा", "lang_ph": "शोध भाषा…", "o_auto": "ऑटो", "o_dark": "डार्क", "o_light": "लाईट", "o_all": "सर्व", "o_phone": "फोन", "o_desktop": "डेस्कटॉप", "o_hd": "HD", "o_fhd": "फुल HD", "o_4k": "4K", "o_small": "लहान", "o_medium": "मध्यम", "o_large": "मोठे", "c_flower": "फूल", "c_lighthouse": "लाईटहाऊस", "c_orchid": "ऑर्किड", "c_butterfly": "फुलपाखरू", "c_dragonfly": "ड्रॅगनफ्लाय", "c_coral": "कोरल", "c_architecture": "आर्किटेक्चर", "c_temple": "मंदिर", "c_waterfall": "धबधबा", "c_galaxy": "आकाशगंगा", "c_animal": "प्राणी", "c_mushroom": "मशरूम", "c_glacier": "ग्लेशियर", "c_staircase": "पायऱ्या", "c_tiger": "वाघ", "c_mountain": "पर्वत", "c_sunset": "सूर्यास्त", "c_desert": "वाळवंट", "c_nightsky": "रात्रीचे आकाश", "c_bird": "पक्षी", "c_nebula": "नेब्युला", "c_stainedglass": "रंगीत काच", "c_cave": "गुहा", "c_landscape": "लँडस्केप"}, "te": {"search_ph": "Search: పర్వతం, సూర్యాస్తమయం, గెలాక్సీ, ఫోటోగ్రాఫర్…", "credits": "క్రెడిట్స్", "all": "అన్నీ", "naye": "🆕 కొత్త", "live": "● లైవ్", "offline": "○ ఆఫ్‌లైన్", "wp_n": "{n} వాల్‌పేపర్లు", "src_note": "అన్నీ Wikimedia Commons నుండి, క్రెడిట్‌తో", "src_search": "\"{q}\" · అన్నీ Wikimedia Commons నుండి", "src_fresh": "Wikimedia Commons నుండి కొత్తగా అప్‌లోడ్ చేసినవి", "synced_now": "ఇప్పుడు సింక్ అయ్యాయి", "synced_ago": "{n} నిమిషాల క్రితం సింక్ అయ్యాయి", "st_loading": "Wikimedia నుండి మరిన్ని వాల్‌పేపర్లను తెస్తోంది…", "st_empty": "😕 ఏమీ దొరకలేదు — వేరే కీవర్డ్ లేదా ఫిల్టర్ ప్రయత్నించండి", "st_end": "✨ అంతే! వేరే కేటగిరీ లేదా సెర్చ్ ప్రయత్నించండి", "st_error": "Wikimedia ని చేరుకోలేకపోయాము", "more_left": "{n} మరిన్ని వాల్‌పేపర్లు ↓", "more_live": "Wikimedia నుండి మరిన్ని లోడ్ చేయండి ↓", "pull_hint": "లేటెస్ట్ వాల్‌పేపర్ల కోసం కిందకు లాగండి", "pull_ready": "రిఫ్రెష్ చేయడానికి రిలీజ్ చేయండి!", "pull_busy": "లేటెస్ట్ వాల్‌పేపర్లను తెస్తోంది…", "new_pill": "🆕 {n} కొత్త వాల్‌పేపర్లు — వాటిని చూడండి", "t_fresh": "✨ {n} కొత్త వాల్‌పేపర్లు జోడించబడ్డాయి", "t_uptodate": "✅ అప్పటికే అప్‌డేట్ అయింది", "t_offline": "📴 ఆఫ్‌లైన్ — సేవ్ చేసిన వాల్‌పేపర్లను చూపిస్తోంది", "t_neterr": "⚠️ Wikimedia ని చేరుకోలేకపోయాము", "t_online": "🌐 మళ్లీ ఆన్‌లైన్‌లోకి వచ్చాము", "t_copied": "✅ క్రెడిట్ కాపీ చేయబడింది", "t_copied_n": "✅ {n} క్రెడిట్స్ కాపీ చేయబడ్డాయి", "t_txt": "⬇ క్రెడిట్స్ ఫైల్ డౌన్‌లోడ్ చేయబడింది", "t_dl": "✅ డౌన్‌లోడ్ అయింది — క్రెడిట్‌ను మర్చిపోకండి!", "t_dlblock": "డౌన్‌లోడ్ బ్లాక్ చేయబడింది. ఇమేజ్‌ను తెరిచి సేవ్ చేయడానికి లాంగ్-ప్రెస్ చేయండి.", "t_reset": "సెట్టింగ్స్ రీసెట్ అయ్యాయి", "tab_info": "సమాచారం", "tab_credit": "క్రెడిట్", "tab_use": "వాల్‌పేపర్‌ను సెట్ చేయండి", "dl_hd": "⬇ HD డౌన్‌లోడ్ చేయండి", "dl_orig": "⬇ ఒరిజినల్", "fs_btn": "⛶ ఫుల్‌స్క్రీన్", "k_artist": "ఫోటోగ్రాఫర్ / ఆర్టిస్ట్", "k_res": "రిజల్యూషన్", "k_cat": "కేటగిరీ", "k_size": "ఫైల్ సైజు", "k_date": "తేదీ", "k_license": "లైసెన్స్", "k_source": "సోర్స్", "src_page": "Wikimedia Commons పేజీ ↗", "credit_note": "ఈ ఇమేజ్ {lic} కింద {artist} కి చెందుతుంది. మీరు దీన్ని షేర్ లేదా రీపోస్ట్ చేసినప్పుడు పైన ఉన్న క్రెడిట్ లైన్‌ను ఉంచండి.", "copy_credit": "📋 క్రెడిట్‌ను కాపీ చేయండి", "all_credits": "📜 క్రెడిట్స్ అన్నీ", "fs_exit": "⤡ ఎగ్జిట్", "fs_fill": "◻ ఫిల్", "fs_fit": "◱ ఫిట్", "cr_title": "📜 క్రెడిట్స్", "cr_ph": "ఫోటోగ్రాఫర్, లైసెన్స్ లేదా ఇమేజ్‌ను సెర్చ్ చేయండి…", "cr_sum": "{n} ఇమేజ్‌లు · {m} ఫోటోగ్రాఫర్లు / క్రియేటర్లు · అందరికీ క్రెడిట్ ఇవ్వబడింది", "cr_more": "మరిన్ని చూపించు", "cr_copy": "📋 క్రెడిట్స్ అన్నీ కాపీ చేయండి", "cr_txt": "⬇ క్రెడిట్స్ .txt", "by": "ద్వారా", "license_word": "లైసెన్స్:", "source_word": "సోర్స్ ↗", "sec_glass": "💎 లిక్విడ్ గ్లాస్", "sec_depth": "🧊 4D డెప్త్", "sec_anim": "🎬 యానిమేషన్స్", "sec_walls": "🖼️ వాల్‌పేపర్లు", "sec_look": "🎨 అప్పియరెన్స్", "l_blur": "బ్లర్", "l_transp": "ట్రాన్స్‌పరెన్సీ", "l_sat": "కలర్ బూస్ట్", "l_shine": "షైన్ / హైలైట్స్", "l_radius": "కార్నర్ రౌండ్‌నెస్", "l_refract": "లిక్విడ్ రిఫ్రాక్షన్", "l_depth": "3D టిల్ట్ డెప్త్", "l_glare": "గ్లేర్ / లైట్ రిఫ్లెక్షన్", "l_parallax": "బ్యాక్‌గ్రౌండ్ పారలాక్స్", "l_gyro": "ఫోన్ మోషన్", "l_anim": "ఓపెన్ / క్లోజ్ స్టైల్", "l_bounce": "బౌన్స్ అమౌంట్", "l_speed": "స్పీడ్", "l_orient": "ఓరియంటేషన్", "l_minres": "కనీస నాణ్యత", "l_live": "లైవ్ ఇంటర్నెట్ అప్‌డేట్స్", "l_lite": "పెర్ఫార్మెన్స్ మోడ్", "l_size": "గ్రిడ్ సైజు", "l_caps": "కార్డులపై టైటిల్స్ చూపించు", "l_creds": "కార్డులపై క్రెడిట్ లైన్", "l_more": "నాన్-ఫీచర్డ్ వాటిని చేర్చండి", "l_theme": "థీమ్", "l_full": "ఫుల్‌స్క్రీన్ యాప్", "l_bg": "లైవ్ వాల్‌పేపర్ బ్యాక్‌డ్రాప్", "reset": "సెట్టింగ్స్ అన్నీ రీసెట్ చేయండి", "l_lang": "భాష", "lang_title": "🌐 భాష", "lang_ph": "సెర్చ్ లాంగ్వేజ్…", "o_auto": "ఆటో", "o_dark": "డార్క్", "o_light": "లైట్", "o_all": "అన్నీ", "o_phone": "ఫోన్", "o_desktop": "డెస్క్‌టాప్", "o_hd": "HD", "o_fhd": "ఫుల్ HD", "o_4k": "4K", "o_small": "చిన్నది", "o_medium": "మధ్యస్థం", "o_large": "పెద్దది", "c_flower": "పూల", "c_lighthouse": "లైట్‌హౌస్", "c_orchid": "ఆర్కిడ్", "c_butterfly": "సీతాకోకచిలుక", "c_dragonfly": "డ్రాగన్‌ఫ్లై", "c_coral": "పగడపు", "c_architecture": "ఆర్కిటెక్చర్", "c_temple": "గుడి", "c_waterfall": "జలపాతం", "c_galaxy": "గెలాక్సీ", "c_animal": "జంతువు", "c_mushroom": "పుట్టగొడుగు", "c_glacier": "హిమానీనదం", "c_staircase": "మెట్లు", "c_tiger": "పులి", "c_mountain": "పర్వతం", "c_sunset": "సూర్యాస్తమయం", "c_desert": "ఎడారి", "c_nightsky": "రాత్రి ఆకాశం", "c_bird": "పక్షి", "c_nebula": "నెబ్యులా", "c_stainedglass": "స్టెయిన్డ్ గ్లాస్", "c_cave": "గుహ", "c_landscape": "ల్యాండ్‌స్కేప్"}, "ta": {"search_ph": "தேடல்: மலை, சூரிய அஸ்தமனம், விண்மீன் மண்டலம், புகைப்படக் கலைஞர்…", "credits": "உரிமங்கள்", "all": "அனைத்தும்", "naye": "🆕 Naye", "live": "● நேரலை", "offline": "○ ஆஃப்லைன்", "wp_n": "{n} வால்பேப்பர்கள்", "src_note": "அனைத்தும் Wikimedia Commons-ல் இருந்து, உரிமையுடன்", "src_search": "\"{q}\" · அனைத்து Wikimedia Commons-ல் இருந்து", "src_fresh": "Wikimedia Commons-ல் இருந்து புதிதாக பதிவேற்றப்பட்டவை", "synced_now": "இப்போது ஒத்திசைக்கப்பட்டது", "synced_ago": "{n} நிமிடங்களுக்கு முன்பு ஒத்திசைக்கப்பட்டது", "st_loading": "Wikimedia-ல் இருந்து மேலும் வால்பேப்பர்களைப் பெறுகிறது…", "st_empty": "😕 எதுவும் கிடைக்கவில்லை — வேறு கீவேர்டு அல்லது ஃபில்டரை முயற்சிக்கவும்", "st_end": "✨ அவ்வளவுதான்! வேறு கேட்டகரி அல்லது தேடலை முயற்சிக்கவும்", "st_error": "Wikimedia-ஐ தொடர்பு கொள்ள முடியவில்லை", "more_left": "{n} மேலும் வால்பேப்பர்கள் ↓", "more_live": "Wikimedia-ல் இருந்து மேலும் லோட் செய்யவும் ↓", "pull_hint": "புதிய வால்பேப்பர்களுக்கு கீழே இழுக்கவும்", "pull_ready": "புதுப்பிக்க தட்டவும்!", "pull_busy": "புதிய வால்பேப்பர்களைப் பெறுகிறது…", "new_pill": "🆕 {n} புதிய வால்பேப்பர்கள் — அவற்றைப் பார்க்கவும்", "t_fresh": "✨ {n} புதிய வால்பேப்பர்கள் சேர்க்கப்பட்டுள்ளன", "t_uptodate": "✅ ஏற்கனவே அப்டேட்டாகிவிட்டது", "t_offline": "📴 ஆஃப்லைன் — சேமிக்கப்பட்ட வால்பேப்பர்களைக் காட்டுகிறது", "t_neterr": "⚠️ Wikimedia-ஐ தொடர்பு கொள்ள முடியவில்லை", "t_online": "🌐 மீண்டும் ஆன்லைனில் வந்துவிட்டது", "t_copied": "✅ உரிமை நகலெடுக்கப்பட்டது", "t_copied_n": "✅ {n} உரிமைகள் நகலெடுக்கப்பட்டன", "t_txt": "⬇ உரிமைகள் கோப்பு பதிவிறக்கம் செய்யப்பட்டது", "t_dl": "✅ பதிவிறக்கம் செய்யப்பட்டது — உரிமையை மறந்துவிடாதீர்கள்!", "t_dlblock": "பதிவிறக்கம் தடுக்கப்பட்டது. படத்தை திறந்து நீண்ட நேரம் அழுத்தி சேமிக்கவும்.", "t_reset": "செட்டிங்ஸ் ரீசெட் செய்யப்பட்டது", "tab_info": "தகவல்", "tab_credit": "உரிமை", "tab_use": "வால்பேப்பரை செட் செய்யவும்", "dl_hd": "⬇ HD-ஐ பதிவிறக்கவும்", "dl_orig": "⬇ ஒரிஜினல்", "fs_btn": "⛶ ஃபுல்ஸ்கிரீன்", "k_artist": "புகைப்படக் கலைஞர் / கலைஞர்", "k_res": "ரெசல்யூஷன்", "k_cat": "கேட்டகரி", "k_size": "கோப்பு அளவு", "k_date": "தேதி", "k_license": "லைசென்ஸ்", "k_source": "ஆதாரம்", "src_page": "Wikimedia Commons பக்கம் ↗", "credit_note": "இந்த படம் {lic}-ன் கீழ் {artist}-க்கு சொந்தமானது. இதை நீங்கள் பகிரும்போதோ அல்லது ரீபோஸ்ட் செய்யும்போதோ மேலே உள்ள உரிமை வரியை அப்படியே வைத்திருக்கவும்.", "copy_credit": "📋 உரிமையை காப்பி செய்யவும்", "all_credits": "📜 அனைத்து உரிமைகள்", "fs_exit": "⤡ வெளியேறவும்", "fs_fill": "◻ நிரப்பவும்", "fs_fit": "◱ பொருத்தவும்", "cr_title": "📜 உரிமைகள்", "cr_ph": "புகைப்படக் கலைஞர், லைசென்ஸ் அல்லது படத்தை தேடவும்…", "cr_sum": "{n} படங்கள் · {m} புகைப்படக் கலைஞர்கள் / படைப்பாளிகள் · அனைவருக்கும் உரிமை வழங்கப்பட்டுள்ளது", "cr_more": "மேலும் காட்டவும்", "cr_copy": "📋 அனைத்து உரிமைகளையும் காப்பி செய்யவும்", "cr_txt": "⬇ உரிமைகள் .txt", "by": "என்பவர்", "license_word": "லைசென்ஸ்:", "source_word": "ஆதாரம் ↗", "sec_glass": "💎 Liquid Glass", "sec_depth": "🧊 4D Depth", "sec_anim": "🎬 அனிமேஷன்கள்", "sec_walls": "🖼️ வால்பேப்பர்கள்", "sec_look": "🎨 தோற்றம்", "l_blur": "மங்கலாக்குதல்", "l_transp": "வெளிப்படைத்தன்மை", "l_sat": "கலர் பூஸ்ட்", "l_shine": "ஷைன் / ஹைலைட்கள்", "l_radius": "மூலைகளை வட்டமாக்குதல்", "l_refract": "திரவ ஒளிவிலகல்", "l_depth": "3D சாய்வு ஆழம்", "l_glare": "கண்ணொளி / ஒளி பிரதிபலிப்பு", "l_parallax": "பேக்ரவுண்ட் பாரலாக்ஸ்", "l_gyro": "போன் மோஷன்", "l_anim": "திறக்கும் / மூடும் ஸ்டைல்", "l_bounce": "பவுன்ஸ் அளவு", "l_speed": "வேகம்", "l_orient": "ஓரியண்டேஷன்", "l_minres": "குறைந்தபட்ச தரம்", "l_live": "லைவ் இன்டர்நெட் அப்டேட்கள்", "l_lite": "பெர்ஃபார்மன்ஸ் மோட்", "l_size": "கிரிட் அளவு", "l_caps": "கார்டுகளில் தலைப்புகளைக் காட்டவும்", "l_creds": "கார்டுகளில் உரிமை வரி", "l_more": "அம்சமில்லாதவற்றை சேர்க்கவும்", "l_theme": "தீம்", "l_full": "ஃபுல்ஸ்கிரீன் ஆப்", "l_bg": "லைவ் வால்பேப்பர் பேக்ட்ராப்", "reset": "அனைத்து செட்டிங்ஸ்களையும் ரீசெட் செய்யவும்", "l_lang": "மொழி", "lang_title": "🌐 மொழி", "lang_ph": "தேடல் மொழி…", "o_auto": "ஆட்டோ", "o_dark": "டார்க்", "o_light": "லைட்", "o_all": "அனைத்தும்", "o_phone": "போன்", "o_desktop": "டெஸ்க்டாப்", "o_hd": "HD", "o_fhd": "Full HD", "o_4k": "4K", "o_small": "சிறியது", "o_medium": "நடுத்தரமானது", "o_large": "பெரியது", "c_flower": "பூ", "c_lighthouse": "லைட்ஹவுஸ்", "c_orchid": "ஆர்க்கிட்", "c_butterfly": "பட்டாம்பூச்சி", "c_dragonfly": "தும்பம்", "c_coral": "பவளம்", "c_architecture": "கட்டிடக்கலை", "c_temple": "கோயில்", "c_waterfall": "நீர்வீழ்ச்சி", "c_galaxy": "விண்மீன் மண்டலம்", "c_animal": "விலங்கு", "c_mushroom": "காளான்", "c_glacier": "பனிப்பாறை", "c_staircase": "படிக்கட்டு", "c_tiger": "புலி", "c_mountain": "மலை", "c_sunset": "சூரிய அஸ்தமனம்", "c_desert": "பாலைவனம்", "c_nightsky": "இரவு வானம்", "c_bird": "பறவை", "c_nebula": "நெபுலா", "c_stainedglass": "வண்ணக் கண்ணாடி", "c_cave": "குகை", "c_landscape": "நிலப்பரப்பு"}, "gu": {"search_ph": "શોધો: પર્વત, સૂર્યાસ્ત, આકાશગંગા, ફોટોગ્રાફર…", "credits": "ક્રેડિટ્સ", "all": "બધા", "naye": "🆕 નવા", "live": "● લાઇવ", "offline": "○ ઑફલાઇન", "wp_n": "{n} વૉલપેપર્સ", "src_note": "બધા વિકિમીડિયા કૉમન્સ પરથી, ક્રેડિટ સાથે", "src_search": "\"{q}\" · બધા વિકિમીડિયા કૉમન્સ પરથી", "src_fresh": "વિકિમીડિયા કૉમન્સ પરથી નવા અપલોડ્સ", "synced_now": "હમણાં જ સિંક થયા", "synced_ago": "{n} મિનિટ પહેલાં સિંક થયા", "st_loading": "વિકિમીડિયા પરથી વધુ વૉલપેપર્સ લાવી રહ્યા છીએ…", "st_empty": "😕 કંઈ મળ્યું નથી — બીજો કીવર્ડ અથવા ફિલ્ટર અજમાવો", "st_end": "✨ બસ આટલું જ! બીજી કેટેગરી અથવા સર્ચ અજમાવો", "st_error": "વિકિમીડિયા સુધી પહોંચી શકાયું નથી", "more_left": "{n} વધુ વૉલપેપર્સ ↓", "more_live": "વિકિમીડિયા પરથી વધુ લોડ કરો ↓", "pull_hint": "નવતરું વૉલપેપર્સ જોવા માટે નીચે ખેંચો", "pull_ready": "રિફ્રેશ કરવા માટે રિલીઝ કરો!", "pull_busy": "નવતરું વૉલપેપર્સ લાવી રહ્યા છીએ…", "new_pill": "🆕 {n} નવા વૉલપેપર્સ — તેમને જુઓ", "t_fresh": "✨ {n} નવા વૉલપેપર્સ ઉમેરાયા", "t_uptodate": "✅ પહેલેથી જ અપ-ટુ-ડેટ છે", "t_offline": "📴 ઑફલાઇન — સેવ કરેલા વૉલપેપર્સ બતાવી રહ્યા છીએ", "t_neterr": "⚠️ વિકિમીડિયા સુધી પહોંચી શકાયું નથી", "t_online": "🌐 પાછા ઓનલાઇન", "t_copied": "✅ ક્રેડિટ કૉપિ થઈ", "t_copied_n": "✅ {n} ક્રેડિટ્સ કૉપિ થઈ", "t_txt": "⬇ ક્રેડિટ્સ ફાઇલ ડાઉનલોડ થઈ", "t_dl": "✅ ડાઉનલોડ થઈ ગયું — ક્રેડિટ ભૂલશો નહીં!", "t_dlblock": "ડાઉનલોડ બ્લોક થઈ ગયું હતું. ઇમેજ ખોલો અને તેને સેવ કરવા માટે લાંબો સમય દબાવી રાખો.", "t_reset": "સેટિંગ્સ રિસેટ થઈ", "tab_info": "માહિતી", "tab_credit": "ક્રેડિટ", "tab_use": "વૉલપેપર સેટ કરો", "dl_hd": "⬇ HD ડાઉનલોડ કરો", "dl_orig": "⬇ મૂળ", "fs_btn": "⛶ ફુલસ્ક્રીન", "k_artist": "ફોટોગ્રાફર / કલાકાર", "k_res": "રિઝોલ્યુશન", "k_cat": "કેટેગરી", "k_size": "ફાઇલ સાઇઝ", "k_date": "તારીખ", "k_license": "લાયસન્સ", "k_source": "સ્ત્રોત", "src_page": "વિકિમીડિયા કૉમન્સ પેજ ↗", "credit_note": "આ ઇમેજ {lic} હેઠળ {artist} ની છે. જ્યારે તમે તેને શેર અથવા રિપોસ્ટ કરો ત્યારે ઉપરની ક્રેડિટ લાઇન રાખો.", "copy_credit": "📋 ક્રેડિટ કૉપિ કરો", "all_credits": "📜 બધી ક્રેડિટ્સ", "fs_exit": "⤡ બહાર નીકળો", "fs_fill": "◻ ભરો", "fs_fit": "◱ ફિટ", "cr_title": "📜 ક્રેડિટ્સ", "cr_ph": "ફોટોગ્રાફર, લાયસન્સ અથવા ઇમેજ શોધો…", "cr_sum": "{n} ઇમેજ · {m} ફોટોગ્રાફર્સ / ક્રિએટર્સ · બધાને ક્રેડિટ અપાઈ છે", "cr_more": "વધુ બતાવો", "cr_copy": "📋 બધી ક્રેડિટ્સ કૉપિ કરો", "cr_txt": "⬇ ક્રેડિટ્સ .txt", "by": "દ્વારા", "license_word": "લાયસન્સ:", "source_word": "સ્ત્રોત ↗", "sec_glass": "💎 લિક્વિડ ગ્લાસ", "sec_depth": "🧊 4D ડેપ્થ", "sec_anim": "🎬 એનિમેશન્સ", "sec_walls": "🖼️ વૉલપેપર્સ", "sec_look": "🎨 દેખાવ", "l_blur": "બ્લર", "l_transp": "પારદર્શિતા", "l_sat": "કલર બૂસ્ટ", "l_shine": "ચમક / હાઇલાઇટ્સ", "l_radius": "કોર્નર રાઉન્ડનેસ", "l_refract": "લિક્વિડ રિફ્રેક્શન", "l_depth": "3D ટિલ્ટ ડેપ્થ", "l_glare": "ગ્લેર / લાઇટ રિફ્લેક્શન", "l_parallax": "બેકગ્રાઉન્ડ પેરલેક્સ", "l_gyro": "ફોન મોશન", "l_anim": "ઓપન / ક્લોઝ સ્ટાઇલ", "l_bounce": "બાઉન્સ એમાઉન્ટ", "l_speed": "સ્પીડ", "l_orient": "ઓરિએન્ટેશન", "l_minres": "ન્યૂનતમ ગુણવત્તા", "l_live": "લાઇવ ઇન્ટરનેટ અપડેટ્સ", "l_lite": "પરફોર્મન્સ મોડ", "l_size": "ગ્રીડ સાઇઝ", "l_caps": "કાર્ડ પર ટાઇટલ બતાવો", "l_creds": "કાર્ડ પર ક્રેડિટ લાઇન", "l_more": "નોન-ફીચર્ડનો સમાવેશ કરો", "l_theme": "થીમ", "l_full": "ફુલસ્ક્રીન એપ", "l_bg": "લાઇવ વૉલપેપર બેકડ્રોપ", "reset": "બધા સેટિંગ્સ રિસેટ કરો", "l_lang": "ભાષા", "lang_title": "🌐 ભાષા", "lang_ph": "સર્ચ ભાષા…", "o_auto": "ઓટો", "o_dark": "ડાર્ક", "o_light": "લાઇટ", "o_all": "બધા", "o_phone": "ફોન", "o_desktop": "ડેસ્કટોપ", "o_hd": "HD", "o_fhd": "ફુલ HD", "o_4k": "4K", "o_small": "નાનું", "o_medium": "મધ્યમ", "o_large": "મોટું", "c_flower": "ફૂલ", "c_lighthouse": "લાઇટહાઉસ", "c_orchid": "ઓર્કિડ", "c_butterfly": "પતંગિયું", "c_dragonfly": "ડ્રેગનફ્લાય", "c_coral": "કોરલ", "c_architecture": "આર્કિટેક્ચર", "c_temple": "મંદિર", "c_waterfall": "જળધોધ", "c_galaxy": "આકાશગંગા", "c_animal": "પ્રાણી", "c_mushroom": "મશરૂમ", "c_glacier": "ગ્લેશિયર", "c_staircase": "પગથિયાં", "c_tiger": "વાઘ", "c_mountain": "પર્વત", "c_sunset": "સૂર્યાસ્ત", "c_desert": "રણ", "c_nightsky": "રાત્રિનું આકાશ", "c_bird": "પક્ષી", "c_nebula": "નેબ્યુલા", "c_stainedglass": "સ્ટેઇન્ડ ગ્લાસ", "c_cave": "ગુફા", "c_landscape": "લેન્ડસ્કેપ"}, "kn": {"search_ph": "ಹುಡುಕಿ: ಪರ್ವತ, ಸೂರ್ಯಾಸ್ತ, ಗ್ಯಾಲಕ್ಸಿ, ಛಾಯಾಗ್ರಾಹಕ...", "credits": "ಕ್ರೆಡಿಟ್ಸ್", "all": "ಎಲ್ಲ", "naye": "🆕 ಹೊಸದು", "live": "● ಲೈವ್", "offline": "○ ಆಫ್‌ಲೈನ್", "wp_n": "{n} ವಾಲ್‌ಪೇಪರ್‌ಗಳು", "src_note": "ಎಲ್ಲವೂ Wikimedia Commons ನಿಂದ, ಕ್ರೆಡಿಟ್‌ನೊಂದಿಗೆ", "src_search": "\"{q}\" · ಎಲ್ಲವೂ Wikimedia Commons ನಿಂದ", "src_fresh": "Wikimedia Commons ನಿಂದ ಹೊಸದಾಗಿ ಅಪ್‌ಲೋಡ್ ಆದವು", "synced_now": "ಈಗಷ್ಟೇ ಸಿಂಕ್ ಆಗಿದೆ", "synced_ago": "{n} ನಿಮಿಷದ ಹಿಂದೆ ಸಿಂಕ್ ಆಗಿದೆ", "st_loading": "Wikimedia ನಿಂದ ಇನ್ನಷ್ಟು ವಾಲ್‌ಪೇಪರ್‌ಗಳನ್ನು ತರುತ್ತಿದೆ...", "st_empty": "😕 ಏನೂ ಸಿಗಲಿಲ್ಲ — ಬೇರೆ ಕೀವರ್ಡ್ ಅಥವಾ ಫಿಲ್ಟರ್ ಪ್ರಯತ್ನಿಸಿ", "st_end": "✨ ಅಷ್ಟೇ! ಬೇರೆ ವರ್ಗ ಅಥವಾ ಹುಡುಕಾಟ ಪ್ರಯತ್ನಿಸಿ", "st_error": "Wikimedia ತಲುಪಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ", "more_left": "{n} ಹೆಚ್ಚು ವಾಲ್‌ಪೇಪರ್‌ಗಳು ↓", "more_live": "Wikimedia ನಿಂದ ಇನ್ನಷ್ಟು ಲೋಡ್ ಮಾಡಿ ↓", "pull_hint": "ಇತ್ತೀಚಿನ ವಾಲ್‌ಪೇಪರ್‌ಗಳಿಗಾಗಿ ಕೆಳಗೆ ಎಳೆಯಿರಿ", "pull_ready": "ರಿಫ್ರೆಶ್ ಮಾಡಲು ರಿಲೀಸ್ ಮಾಡಿ!", "pull_busy": "ಇತ್ತೀಚಿನ ವಾಲ್‌ಪೇಪರ್‌ಗಳನ್ನು ತರುತ್ತಿದೆ...", "new_pill": "🆕 {n} ಹೊಸ ವಾಲ್‌ಪೇಪರ್‌ಗಳು — ನೋಡಿ", "t_fresh": "✨ {n} ಹೊಸ ವಾಲ್‌ಪೇಪರ್‌ಗಳನ್ನು ಸೇರಿಸಲಾಗಿದೆ", "t_uptodate": "✅ ಈಗಾಗಲೇ ಅಪ್‌ಡೇಟ್ ಆಗಿದೆ", "t_offline": "📴 ಆಫ್‌ಲೈನ್ — ಸೇವ್ ಮಾಡಿದ ವಾಲ್‌ಪೇಪರ್‌ಗಳನ್ನು ತೋರಿಸುತ್ತಿದೆ", "t_neterr": "⚠️ Wikimedia ತಲುಪಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ", "t_online": "🌐 ಮತ್ತೆ ಆನ್‌ಲೈನ್", "t_copied": "✅ ಕ್ರೆಡಿಟ್ ಕಾಪಿ ಮಾಡಲಾಗಿದೆ", "t_copied_n": "✅ {n} ಕ್ರೆಡಿಟ್‌ಗಳನ್ನು ಕಾಪಿ ಮಾಡಲಾಗಿದೆ", "t_txt": "⬇ ಕ್ರೆಡಿಟ್ಸ್ ಫೈಲ್ ಡೌನ್‌ಲೋಡ್ ಆಗಿದೆ", "t_dl": "✅ ಡೌನ್‌ಲೋಡ್ ಆಗಿದೆ — ಕ್ರೆಡಿಟ್ ಮರೆಯಬೇಡಿ!", "t_dlblock": "ಡೌನ್‌ಲೋಡ್ ಬ್ಲಾಕ್ ಆಗಿದೆ. ಚಿತ್ರವನ್ನು ಓಪನ್ ಮಾಡಿ ಮತ್ತು ಸೇವ್ ಮಾಡಲು ಲಾಂಗ್-ಪ್ರೆಸ್ ಮಾಡಿ.", "t_reset": "ಸೆಟ್ಟಿಂಗ್ಸ್ ರಿಸೆಟ್ ಆಗಿದೆ", "tab_info": "ಮಾಹಿತಿ", "tab_credit": "ಕ್ರೆಡಿಟ್", "tab_use": "ವಾಲ್‌ಪೇಪರ್ ಸೆಟ್ ಮಾಡಿ", "dl_hd": "⬇ HD ಡೌನ್‌ಲೋಡ್ ಮಾಡಿ", "dl_orig": "⬇ ಒರಿಜಿನಲ್", "fs_btn": "⛶ ಫುಲ್‌ಸ್ಕ್ರೀನ್", "k_artist": "ಛಾಯಾಗ್ರಾಹಕ / ಕಲಾವಿದ", "k_res": "ರೆಸಲ್ಯೂಶನ್", "k_cat": "ವರ್ಗ", "k_size": "ಫೈಲ್ ಗಾತ್ರ", "k_date": "ದಿನಾಂಕ", "k_license": "ಲೈಸೆನ್ಸ್", "k_source": "ಮೂಲ", "src_page": "Wikimedia Commons ಪುಟ ↗", "credit_note": "ಈ ಚಿತ್ರವು {lic} ಅಡಿಯಲ್ಲಿ {artist} ಗೆ ಸೇರಿದೆ. ನೀವು ಇದನ್ನು ಶೇರ್ ಮಾಡಿದಾಗ ಅಥವಾ ರಿಪೋಸ್ಟ್ ಮಾಡಿದಾಗ ಮೇಲಿನ ಕ್ರೆಡಿಟ್ ಲೈನ್ ಅನ್ನು ಹಾಗೆಯೇ ಉಳಿಸಿಕೊಳ್ಳಿ.", "copy_credit": "📋 ಕ್ರೆಡಿಟ್ ಕಾಪಿ ಮಾಡಿ", "all_credits": "📜 ಎಲ್ಲ ಕ್ರೆಡಿಟ್‌ಗಳು", "fs_exit": "⤡ ನಿರ್ಗಮಿಸಿ", "fs_fill": "◻ ತುಂಬಿಸಿ", "fs_fit": "◱ ಫಿಟ್ ಮಾಡಿ", "cr_title": "📜 ಕ್ರೆಡಿಟ್‌ಗಳು", "cr_ph": "ಛಾಯಾಗ್ರಾಹಕ, ಲೈಸೆನ್ಸ್ ಅಥವಾ ಚಿತ್ರವನ್ನು ಹುಡುಕಿ...", "cr_sum": "{n} ಚಿತ್ರಗಳು · {m} ಛಾಯಾಗ್ರಾಹಕರು / ಸೃಷ್ಟಿಕರ್ತರು · ಎಲ್ಲದಕ್ಕೂ ಕ್ರೆಡಿಟ್ ನೀಡಲಾಗಿದೆ", "cr_more": "ಇನ್ನಷ್ಟು ತೋರಿಸಿ", "cr_copy": "📋 ಎಲ್ಲ ಕ್ರೆಡಿಟ್‌ಗಳನ್ನು ಕಾಪಿ ಮಾಡಿ", "cr_txt": "⬇ ಕ್ರೆಡಿಟ್ಸ್ .txt", "by": "ಇವರಿಂದ", "license_word": "ಲೈಸೆನ್ಸ್:", "source_word": "ಮೂಲ ↗", "sec_glass": "💎 ಲಿಕ್ವಿಡ್ ಗ್ಲಾಸ್", "sec_depth": "🧊 4D ಡೆಪ್ತ್", "sec_anim": "🎬 ಅನಿಮೇಷನ್‌ಗಳು", "sec_walls": "🖼️ ವಾಲ್‌ಪೇಪರ್‌ಗಳು", "sec_look": "🎨 ನೋಟ", "l_blur": "ಬ್ಲರ್", "l_transp": "ಪಾರದರ್ಶಕತೆ", "l_sat": "ಕಲರ್ ಬೂಸ್ಟ್", "l_shine": "ಶೈನ್ / ಹೈಲೈಟ್ಸ್", "l_radius": "ಕಾರ್ನರ್ ರೌಂಡ್‌ನೆಸ್", "l_refract": "ಲಿಕ್ವಿಡ್ ರಿಫ್ರಾಕ್ಷನ್", "l_depth": "3D ಟಿಲ್ಟ್ ಡೆಪ್ತ್", "l_glare": "ಗ್ಲೇರ್ / ಲೈಟ್ ರಿಫ್ಲೆಕ್ಷನ್", "l_parallax": "ಬ್ಯಾಕ್‌ಗ್ರೌಂಡ್ ಪ್ಯಾರಲ್ಯಾಕ್ಸ್", "l_gyro": "ಫೋನ್ ಮೋಷನ್", "l_anim": "ಓಪನ್ / ಕ್ಲೋಸ್ ಸ್ಟೈಲ್", "l_bounce": "ಬೌನ್ಸ್ ಪ್ರಮಾಣ", "l_speed": "ವೇಗ", "l_orient": "ಓರಿಯಂಟೇಶನ್", "l_minres": "ಕನಿಷ್ಠ ಗುಣಮಟ್ಟ", "l_live": "ಲೈವ್ ಇಂಟರ್ನೆಟ್ ಅಪ್‌ಡೇಟ್‌ಗಳು", "l_lite": "ಪರ್ಫಾರ್ಮೆನ್ಸ್ ಮೋಡ್", "l_size": "ಗ್ರಿಡ್ ಗಾತ್ರ", "l_caps": "ಕಾರ್ಡ್‌ಗಳ ಮೇಲೆ ಟೈಟಲ್‌ಗಳನ್ನು ತೋರಿಸಿ", "l_creds": "ಕಾರ್ಡ್‌ಗಳ ಮೇಲೆ ಕ್ರೆಡಿಟ್ ಲೈನ್", "l_more": "ನಾನ್-ಫೀಚರ್ಡ್ ಸೇರಿಸಿ", "l_theme": "ಥೀಮ್", "l_full": "ಫುಲ್‌ಸ್ಕ್ರೀನ್ ಆ್ಯಪ್", "l_bg": "ಲೈವ್ ವಾಲ್‌ಪೇಪರ್ ಬ್ಯಾಕ್‌ಡ್ರಾಪ್", "reset": "ಎಲ್ಲ ಸೆಟ್ಟಿಂಗ್‌ಗಳನ್ನು ರಿಸೆಟ್ ಮಾಡಿ", "l_lang": "ಭಾಷೆ", "lang_title": "🌐 ಭಾಷೆ", "lang_ph": "ಹುಡುಕಾಟ ಭಾಷೆ...", "o_auto": "ಆಟೋ", "o_dark": "ಡಾರ್ಕ್", "o_light": "ಲೈಟ್", "o_all": "ಎಲ್ಲ", "o_phone": "ಫೋನ್", "o_desktop": "ಡೆಸ್ಕ್‌ಟಾಪ್", "o_hd": "HD", "o_fhd": "ಫುಲ್ HD", "o_4k": "4K", "o_small": "ಸಣ್ಣ", "o_medium": "ಮಧ್ಯಮ", "o_large": "ದೊಡ್ಡ", "c_flower": "ಹೂವು", "c_lighthouse": "ಲೈಟ್‌ಹೌಸ್", "c_orchid": "ಆರ್ಕಿಡ್", "c_butterfly": "ಚಿಟ್ಟೆ", "c_dragonfly": "ತೋಣಿ", "c_coral": "ಹವಳ", "c_architecture": "ವಾಸ್ತುಶಿಲ್ಪ", "c_temple": "ದೇವಾಲಯ", "c_waterfall": "ಜಲಪಾತ", "c_galaxy": "ಗ್ಯಾಲಕ್ಸಿ", "c_animal": "ಪ್ರಾಣಿ", "c_mushroom": "ಅಣಬೆ", "c_glacier": "ಹಿಮನದಿ", "c_staircase": "ಮೆಟ್ಟಿಲು", "c_tiger": "ಹುಲಿ", "c_mountain": "ಪರ್ವತ", "c_sunset": "ಸೂರ್ಯಾಸ್ತ", "c_desert": "ಮರುಭೂಮಿ", "c_nightsky": "ರಾತ್ರಿ ಆಕಾಶ", "c_bird": "ಪಕ್ಷಿ", "c_nebula": "ನೆಬ್ಯುಲಾ", "c_stainedglass": "ಸ್ಟೇನ್ಡ್ ಗ್ಲಾಸ್", "c_cave": "ಗುಹೆ", "c_landscape": "ಲ್ಯಾಂಡ್‌ಸ್ಕೇಪ್"}, "ml": {"search_ph": "തിരയുക: പർവ്വതം, സൂര്യാസ്തമയം, ഗാലക്സി, ഫോട്ടോഗ്രാഫർ...", "credits": "ക്രെഡിറ്റുകൾ", "all": "എല്ലാം", "naye": "🆕 പുതിയത്", "live": "● ലൈവ്", "offline": "○ ഓഫ്‌ലൈൻ", "wp_n": "{n} വാൾപേപ്പറുകൾ", "src_note": "എല്ലാം വിക്കിമീഡിയ കോമൺസിൽ നിന്ന്, ക്രെഡിറ്റ് സഹിതം", "src_search": "\"{q}\" · എല്ലാം വിക്കിമീഡിയ കോമൺസിൽ നിന്ന്", "src_fresh": "വിക്കിമീഡിയ കോമൺസിൽ നിന്നുള്ള ഏറ്റവും പുതിയ അപ്‌ലോഡുകൾ", "synced_now": "ഇപ്പോൾ സിങ്ക് ചെയ്തു", "synced_ago": "{n} മിനിറ്റ് മുമ്പ് സിങ്ക് ചെയ്തു", "st_loading": "വിക്കിമീഡിയയിൽ നിന്ന് കൂടുതൽ വാൾപേപ്പറുകൾ എടുക്കുന്നു...", "st_empty": "😕 ഒന്നും കണ്ടെത്തിയില്ല — മറ്റൊരു കീവേർഡോ ഫിൽറ്ററോ പരീക്ഷിക്കുക", "st_end": "✨ അത്രയേ ഉള്ളൂ! മറ്റൊരു കാറ്റഗറിയോ തിരയലോ പരീക്ഷിക്കുക", "st_error": "വിക്കിമീഡിയയിൽ എത്താൻ കഴിഞ്ഞില്ല", "more_left": "{n} കൂടുതൽ വാൾപേപ്പറുകൾ ↓", "more_live": "വിക്കിമീഡിയയിൽ നിന്ന് കൂടുതൽ ലോഡ് ചെയ്യുക ↓", "pull_hint": "ഏറ്റവും പുതിയ വാൾപേപ്പറുകൾക്കായി താഴേക്ക് വലിക്കുക", "pull_ready": "പുതുക്കാൻ റിലീസ് ചെയ്യുക!", "pull_busy": "ഏറ്റവും പുതിയ വാൾപേപ്പറുകൾ എടുക്കുന്നു...", "new_pill": "🆕 {n} പുതിയ വാൾപേപ്പറുകൾ — അവ കാണുക", "t_fresh": "✨ {n} പുതിയ വാൾപേപ്പറുകൾ ചേർത്തു", "t_uptodate": "✅ ഇതിനകം അപ്‌ഡേറ്റ് ചെയ്തു", "t_offline": "📴 ഓഫ്‌ലൈൻ — സേവ് ചെയ്ത വാൾപേപ്പറുകൾ കാണിക്കുന്നു", "t_neterr": "⚠️ വിക്കിമീഡിയയിൽ എത്താൻ കഴിഞ്ഞില്ല", "t_online": "🌐 വീണ്ടും ഓൺലൈനായി", "t_copied": "✅ ക്രെഡിറ്റ് കോപ്പി ചെയ്തു", "t_copied_n": "✅ {n} ക്രെഡിറ്റുകൾ കോപ്പി ചെയ്തു", "t_txt": "⬇ ക്രെഡിറ്റ് ഫയൽ ഡൗൺലോഡ് ചെയ്തു", "t_dl": "✅ ഡൗൺലോഡ് ചെയ്തു — ക്രെഡിറ്റ് മറക്കരുത്!", "t_dlblock": "ഡൗൺലോഡ് ബ്ലോക്ക് ചെയ്തു. ഇമേജ് തുറന്ന് സേവ് ചെയ്യാൻ അമർത്തിപ്പിടിക്കുക.", "t_reset": "സെറ്റിംഗ്സ് റീസെറ്റ് ചെയ്തു", "tab_info": "വിവരങ്ങൾ", "tab_credit": "ക്രെഡിറ്റ്", "tab_use": "വാൾപേപ്പർ സെറ്റ് ചെയ്യുക", "dl_hd": "⬇ HD ഡൗൺലോഡ് ചെയ്യുക", "dl_orig": "⬇ ഒറിജിനൽ", "fs_btn": "⛶ ഫുൾസ്ക്രീൻ", "k_artist": "ഫോട്ടോഗ്രാഫർ / ആർട്ടിസ്റ്റ്", "k_res": "റെസല്യൂഷൻ", "k_cat": "കാറ്റഗറി", "k_size": "ഫയൽ സൈസ്", "k_date": "തീയതി", "k_license": "ലൈസൻസ്", "k_source": "സോഴ്സ്", "src_page": "വിക്കിമീഡിയ കോമൺസ് പേജ് ↗", "credit_note": "ഈ ചിത്രം {lic}-ന് കീഴിൽ {artist}-ന്റേതാണ്. ഇത് ഷെയർ ചെയ്യുകയോ റീപോസ്റ്റ് ചെയ്യുകയോ ചെയ്യുമ്പോൾ മുകളിലുള്ള ക്രെഡിറ്റ് ലൈൻ നിലനിർത്തുക.", "copy_credit": "📋 ക്രെഡിറ്റ് കോപ്പി ചെയ്യുക", "all_credits": "📜 എല്ലാ ക്രെഡിറ്റുകളും", "fs_exit": "⤡ എക്സിറ്റ്", "fs_fill": "◻ ഫിൽ", "fs_fit": "◱ ഫിറ്റ്", "cr_title": "📜 ക്രെഡിറ്റുകൾ", "cr_ph": "ഫോട്ടോഗ്രാഫർ, ലൈസൻസ് അല്ലെങ്കിൽ ഇമേജ് തിരയുക...", "cr_sum": "{n} ചിത്രങ്ങൾ · {m} ഫോട്ടോഗ്രാഫർമാർ / ക്രിയേറ്റർമാർ · എല്ലാവർക്കും ക്രെഡിറ്റ് നൽകി", "cr_more": "കൂടുതൽ കാണിക്കുക", "cr_copy": "📋 എല്ലാ ക്രെഡിറ്റുകളും കോപ്പി ചെയ്യുക", "cr_txt": "⬇ ക്രെഡിറ്റുകൾ .txt", "by": "രചന", "license_word": "ലൈസൻസ്:", "source_word": "സോഴ്സ് ↗", "sec_glass": "💎 ലിക്വിഡ് ഗ്ലാസ്", "sec_depth": "🧊 4D ഡെപ്ത്", "sec_anim": "🎬 ആനിമേഷനുകൾ", "sec_walls": "🖼️ വാൾപേപ്പറുകൾ", "sec_look": "🎨 രൂപം", "l_blur": "ബ്ലർ", "l_transp": "ട്രാൻസ്പരൻസി", "l_sat": "കളർ ബൂസ്റ്റ്", "l_shine": "ഷൈൻ / ഹൈലൈറ്റുകൾ", "l_radius": "കോർണർ റൗണ്ഡ്നെസ്", "l_refract": "ലിക്വിഡ് റിഫ്രാക്ഷൻ", "l_depth": "3D ടിൽറ്റ് ഡെപ്ത്", "l_glare": "ഗ്ലെയർ / ലൈറ്റ് റിഫ്ലക്ഷൻ", "l_parallax": "ബാക്ക്ഗ്രൗണ്ട് പാരലാക്സ്", "l_gyro": "ഫോൺ മോഷൻ", "l_anim": "തുറക്കുക / അടയ്ക്കുക ശൈലി", "l_bounce": "ബൗൺസ് അളവ്", "l_speed": "വേഗത", "l_orient": "ഓറിയന്റേഷൻ", "l_minres": "കുറഞ്ഞ നിലവാരം", "l_live": "ലൈവ് ഇന്റർനെറ്റ് അപ്‌ഡേറ്റുകൾ", "l_lite": "പെർഫോമൻസ് മോഡ്", "l_size": "ഗ്രിഡ് സൈസ്", "l_caps": "കാർഡുകളിൽ ടൈറ്റിലുകൾ കാണിക്കുക", "l_creds": "കാർഡുകളിൽ ക്രെഡിറ്റ് ലൈൻ", "l_more": "ഫീച്ചർ ചെയ്യാത്തവ ഉൾപ്പെടുത്തുക", "l_theme": "തീം", "l_full": "ഫുൾസ്ക്രീൻ ആപ്പ്", "l_bg": "ലൈവ് വാൾപേപ്പർ ബാക്ക്ഡ്രോപ്പ്", "reset": "എല്ലാ സെറ്റിംഗ്സും റീസെറ്റ് ചെയ്യുക", "l_lang": "ഭാഷ", "lang_title": "🌐 ഭാഷ", "lang_ph": "തിരയൽ ഭാഷ...", "o_auto": "ഓട്ടോ", "o_dark": "ഡാർക്ക്", "o_light": "ലൈറ്റ്", "o_all": "എല്ലാം", "o_phone": "ഫോൺ", "o_desktop": "ഡെസ്ക്ടോപ്പ്", "o_hd": "HD", "o_fhd": "ഫുൾ HD", "o_4k": "4K", "o_small": "ചെറിയത്", "o_medium": "ഇടത്തരം", "o_large": "വലുത്", "c_flower": "പൂവ്", "c_lighthouse": "ലൈറ്റ്ഹൗസ്", "c_orchid": "ഓർക്കിഡ്", "c_butterfly": "ചിത്രശലഭം", "c_dragonfly": "തുമ്പി", "c_coral": "പവിഴം", "c_architecture": "ആർക്കിടെക്ചർ", "c_temple": "ക്ഷേത്രം", "c_waterfall": "വെള്ളച്ചാട്ടം", "c_galaxy": "ഗാലക്സി", "c_animal": "മൃഗം", "c_mushroom": "കൂൺ", "c_glacier": "ഹിമാനി", "c_staircase": "കോണിപ്പടി", "c_tiger": "കടുവ", "c_mountain": "പർവ്വതം", "c_sunset": "സൂര്യാസ്തമയം", "c_desert": "മരുഭൂമി", "c_nightsky": "രാത്രി ആകാശം", "c_bird": "പക്ഷി", "c_nebula": "നെബുല", "c_stainedglass": "സ്റ്റെയിൻഡ് ഗ്ലാസ്", "c_cave": "ഗുഹ", "c_landscape": "പ്രകൃതിദൃശ്യം"}, "pa": {"search_ph": "ਖੋਜ: ਪਹਾੜ, ਸੂਰਜ ਡੁੱਬਣਾ, ਗਲੈਕਸੀ, ਫੋਟੋਗ੍ਰਾਫਰ...", "credits": "ਕ੍ਰੈਡਿਟ", "all": "ਸਾਰੇ", "naye": "🆕 ਨਵੇਂ", "live": "● ਲਾਈਵ", "offline": "○ ਆਫਲਾਈਨ", "wp_n": "{n} ਵਾਲਪੇਪਰ", "src_note": "ਸਾਰੇ Wikimedia Commons ਤੋਂ, ਕ੍ਰੈਡਿਟ ਦੇ ਨਾਲ", "src_search": "\"{q}\" · ਸਾਰੇ Wikimedia Commons ਤੋਂ", "src_fresh": "Wikimedia Commons ਤੋਂ ਸਭ ਤੋਂ ਨਵੇਂ ਅਪਲੋਡ", "synced_now": "ਹੁਣੇ ਸਿੰਕ ਕੀਤਾ", "synced_ago": "{n} ਮਿੰਟ ਪਹਿਲਾਂ ਸਿੰਕ ਕੀਤਾ", "st_loading": "Wikimedia ਤੋਂ ਹੋਰ ਵਾਲਪੇਪਰ ਲਿਆ ਰਹੇ ਹਾਂ...", "st_empty": "😕 ਕੁਝ ਨਹੀਂ ਮਿਲਿਆ — ਕੋਈ ਹੋਰ ਕੀਵਰਡ ਜਾਂ ਫਿਲਟਰ ਅਜ਼ਮਾਓ", "st_end": "✨ ਬਸ ਇਹੀ ਹੈ! ਕੋਈ ਹੋਰ ਕੈਟੇਗਰੀ ਜਾਂ ਖੋਜ ਅਜ਼ਮਾਓ", "st_error": "Wikimedia ਤੱਕ ਪਹੁੰਚ ਨਹੀਂ ਹੋ ਸਕੀ", "more_left": "{n} ਹੋਰ ਵਾਲਪੇਪਰ ↓", "more_live": "Wikimedia ਤੋਂ ਹੋਰ ਲੋਡ ਕਰੋ ↓", "pull_hint": "ਸਭ ਤੋਂ ਨਵੇਂ ਵਾਲਪੇਪਰਾਂ ਲਈ ਹੇਠਾਂ ਖਿੱਚੋ", "pull_ready": "ਰੀਫ੍ਰੈਸ਼ ਕਰਨ ਲਈ ਛੱਡੋ!", "pull_busy": "ਸਭ ਤੋਂ ਨਵੇਂ ਵਾਲਪੇਪਰ ਲਿਆ ਰਹੇ ਹਾਂ...", "new_pill": "🆕 {n} ਨਵੇਂ ਵਾਲਪੇਪਰ — ਉਹਨਾਂ ਨੂੰ ਦੇਖੋ", "t_fresh": "✨ {n} ਨਵੇਂ ਵਾਲਪੇਪਰ ਸ਼ਾਮਲ ਕੀਤੇ ਗਏ", "t_uptodate": "✅ ਪਹਿਲਾਂ ਹੀ ਅੱਪ-ਟੂ-ਡੇਟ", "t_offline": "📴 ਆਫਲਾਈਨ — ਸੇਵ ਕੀਤੇ ਵਾਲਪੇਪਰ ਦਿਖਾ ਰਹੇ ਹਾਂ", "t_neterr": "⚠️ Wikimedia ਤੱਕ ਪਹੁੰਚ ਨਹੀਂ ਹੋ ਸਕੀ", "t_online": "🌐 ਵਾਪਸ ਆਨਲਾਈਨ", "t_copied": "✅ ਕ੍ਰੈਡਿਟ ਕਾਪੀ ਹੋ ਗਿਆ", "t_copied_n": "✅ {n} ਕ੍ਰੈਡਿਟ ਕਾਪੀ ਹੋ ਗਏ", "t_txt": "⬇ ਕ੍ਰੈਡਿਟ ਫਾਈਲ ਡਾਊਨਲੋਡ ਹੋ ਗਈ", "t_dl": "✅ ਡਾਊਨਲੋਡ ਹੋ ਗਿਆ — ਕ੍ਰੈਡਿਟ ਨੂੰ ਨਾ ਭੁੱਲੋ!", "t_dlblock": "ਡਾਊਨਲੋਡ ਬਲੌਕ ਹੋ ਗਿਆ ਸੀ। ਇਮੇਜ ਖੋਲ੍ਹੋ ਅਤੇ ਸੇਵ ਕਰਨ ਲਈ ਲੰਬਾ ਪ੍ਰੈੱਸ ਕਰੋ।", "t_reset": "ਸੈਟਿੰਗਜ਼ ਰੀਸੈੱਟ", "tab_info": "ਜਾਣਕਾਰੀ", "tab_credit": "ਕ੍ਰੈਡਿਟ", "tab_use": "ਵਾਲਪੇਪਰ ਸੈੱਟ ਕਰੋ", "dl_hd": "⬇ HD ਡਾਊਨਲੋਡ ਕਰੋ", "dl_orig": "⬇ ਅਸਲੀ", "fs_btn": "⛶ ਫੁੱਲਸਕ੍ਰੀਨ", "k_artist": "ਫੋਟੋਗ੍ਰਾਫਰ / ਕਲਾਕਾਰ", "k_res": "ਰੈਜ਼ੋਲਿਊਸ਼ਨ", "k_cat": "ਕੈਟੇਗਰੀ", "k_size": "ਫਾਈਲ ਦਾ ਆਕਾਰ", "k_date": "ਤਾਰੀਖ", "k_license": "ਲਾਇਸੈਂਸ", "k_source": "ਸਰੋਤ", "src_page": "Wikimedia Commons ਪੇਜ ↗", "credit_note": "ਇਹ ਇਮੇਜ {lic} ਦੇ ਤਹਿਤ {artist} ਦੀ ਹੈ। ਜਦੋਂ ਤੁਸੀਂ ਇਸਨੂੰ ਸ਼ੇਅਰ ਜਾਂ ਰੀਪੋਸਟ ਕਰਦੇ ਹੋ ਤਾਂ ਉੱਪਰ ਦਿੱਤੀ ਕ੍ਰੈਡਿਟ ਲਾਈਨ ਨੂੰ ਰੱਖੋ।", "copy_credit": "📋 ਕ੍ਰੈਡਿਟ ਕਾਪੀ ਕਰੋ", "all_credits": "📜 ਸਾਰੇ ਕ੍ਰੈਡਿਟ", "fs_exit": "⤡ ਬਾਹਰ ਜਾਓ", "fs_fill": "◻ ਭਰੋ", "fs_fit": "◱ ਫਿੱਟ", "cr_title": "📜 ਕ੍ਰੈਡਿਟ", "cr_ph": "ਫੋਟੋਗ੍ਰਾਫਰ, ਲਾਇਸੈਂਸ ਜਾਂ ਇਮੇਜ ਦੀ ਖੋਜ ਕਰੋ...", "cr_sum": "{n} ਇਮੇਜ · {m} ਫੋਟੋਗ੍ਰਾਫਰ / ਕ੍ਰਿਏਟਰ · ਸਾਰੇ ਕ੍ਰੈਡਿਟ ਵਾਲੇ", "cr_more": "ਹੋਰ ਦਿਖਾਓ", "cr_copy": "📋 ਸਾਰੇ ਕ੍ਰੈਡਿਟ ਕਾਪੀ ਕਰੋ", "cr_txt": "⬇ ਕ੍ਰੈਡਿਟ .txt", "by": "ਦੁਆਰਾ", "license_word": "ਲਾਇਸੈਂਸ:", "source_word": "ਸਰੋਤ ↗", "sec_glass": "💎 ਲਿਕਵਿਡ ਗਲਾਸ", "sec_depth": "🧊 4D ਡੈਪਥ", "sec_anim": "🎬 ਐਨੀਮੇਸ਼ਨ", "sec_walls": "🖼️ ਵਾਲਪੇਪਰ", "sec_look": "🎨 ਦਿੱਖ", "l_blur": "ਬਲਰ", "l_transp": "ਪਾਰਦਰਸ਼ਤਾ", "l_sat": "ਕਲਰ ਬੂਸਟ", "l_shine": "ਚਮਕ / ਹਾਈਲਾਈਟਸ", "l_radius": "ਕੋਨਿਆਂ ਦਾ ਗੋਲ ਹੋਣਾ", "l_refract": "ਲਿਕਵਿਡ ਰਿਫ੍ਰੈਕਸ਼ਨ", "l_depth": "3D ਟਿਲਟ ਡੈਪਥ", "l_glare": "ਚਮਕ / ਲਾਈਟ ਰਿਫਲੈਕਸ਼ਨ", "l_parallax": "ਬੈਕਗ੍ਰਾਊਂਡ ਪੈਰਾਲੈਕਸ", "l_gyro": "ਫੋਨ ਮੋਸ਼ਨ", "l_anim": "ਖੋਲ੍ਹਣ / ਬੰਦ ਕਰਨ ਦਾ ਸਟਾਈਲ", "l_bounce": "ਬਾਊਂਸ ਦੀ ਮਾਤਰਾ", "l_speed": "ਸਪੀਡ", "l_orient": "ਓਰੀਐਂਟੇਸ਼ਨ", "l_minres": "ਘੱਟੋ-ਘੱਟ ਕੁਆਲਿਟੀ", "l_live": "ਲਾਈਵ ਇੰਟਰਨੈੱਟ ਅੱਪਡੇਟ", "l_lite": "ਪਰਫਾਰਮੈਂਸ ਮੋਡ", "l_size": "ਗਰਿੱਡ ਦਾ ਆਕਾਰ", "l_caps": "ਕਾਰਡਾਂ 'ਤੇ ਟਾਈਟਲ ਦਿਖਾਓ", "l_creds": "ਕਾਰਡਾਂ 'ਤੇ ਕ੍ਰੈਡਿਟ ਲਾਈਨ", "l_more": "ਗੈਰ-ਫੀਚਰਡ ਸ਼ਾਮਲ ਕਰੋ", "l_theme": "ਥੀਮ", "l_full": "ਫੁੱਲਸਕ੍ਰੀਨ ਐਪ", "l_bg": "ਲਾਈਵ ਵਾਲਪੇਪਰ ਬੈਕਡ੍ਰੌਪ", "reset": "ਸਾਰੀਆਂ ਸੈਟਿੰਗਜ਼ ਰੀਸੈੱਟ ਕਰੋ", "l_lang": "ਭਾਸ਼ਾ", "lang_title": "🌐 ਭਾਸ਼ਾ", "lang_ph": "ਭਾਸ਼ਾ ਖੋਜੋ...", "o_auto": "ਆਟੋ", "o_dark": "ਡਾਰਕ", "o_light": "ਲਾਈਟ", "o_all": "ਸਾਰੇ", "o_phone": "ਫੋਨ", "o_desktop": "ਡੈਸਕਟਾਪ", "o_hd": "HD", "o_fhd": "ਫੁੱਲ HD", "o_4k": "4K", "o_small": "ਛੋਟਾ", "o_medium": "ਦਰਮਿਆਨਾ", "o_large": "ਵੱਡਾ", "c_flower": "ਫੁੱਲ", "c_lighthouse": "ਲਾਈਟਹਾਊਸ", "c_orchid": "ਆਰਕਿਡ", "c_butterfly": "ਤਿਤਲੀ", "c_dragonfly": "ਡ੍ਰੈਗਨਫਲਾਈ", "c_coral": "ਕੋਰਲ", "c_architecture": "ਆਰਕੀਟੈਕਚਰ", "c_temple": "ਮੰਦਰ", "c_waterfall": "ਝਰਨਾ", "c_galaxy": "ਗਲੈਕਸੀ", "c_animal": "ਜਾਨਵਰ", "c_mushroom": "ਖੁੰਬ", "c_glacier": "ਗਲੇਸ਼ੀਅਰ", "c_staircase": "ਪੌੜੀਆਂ", "c_tiger": "ਟਾਈਗਰ", "c_mountain": "ਪਹਾੜ", "c_sunset": "ਸੂਰਜ ਡੁੱਬਣਾ", "c_desert": "ਮਾਰੂਥਲ", "c_nightsky": "ਰਾਤ ਦਾ ਅਸਮਾਨ", "c_bird": "ਪੰਛੀ", "c_nebula": "ਨੀਬੂਲਾ", "c_stainedglass": "ਰੰਗੀਨ ਸ਼ੀਸ਼ਾ", "c_cave": "ਗੁਫਾ", "c_landscape": "ਲੈਂਡਸਕੇਪ"}};
@@ -1136,6 +1520,7 @@ function chipLabel(c){
   return t('c_'+c.replace(/ /g,''))||catTitle(c);
 }
 function buildChips(){
+  if(feedMode!=='wiki'){buildCatChips();return}
   const active=(chipsBox.querySelector(':scope > .on')||{}).dataset;
   const activeKey=active&&active.cat?active.cat:'All';
   chipsBox.replaceChildren();
@@ -1151,6 +1536,47 @@ function buildChips(){
   });
   moveLens(chipsBox,true);
 }
+function buildCatChips(){
+  chipsBox.replaceChildren();
+  chipsBox.append(el('i',{class:'lens'}));
+  ['All'].concat(CATS15.map(c=>c[0])).forEach(c=>{
+    const b=el('button',{type:'button','data-cat':c,class:(c===mcat||(c==='All'&&!mcat))?'on':'',on:{click:e=>{
+      const btn=e.currentTarget;
+      chipsBox.querySelectorAll(':scope > button').forEach(x=>x.classList.toggle('on',x===btn));
+      mcat=(c==='All')?'':c;
+      $('q').value='';moveLens(chipsBox);
+      chipsBox.scrollTo({left:btn.offsetLeft-chipsBox.clientWidth/2+btn.offsetWidth/2,behavior:'smooth'});
+      start('');
+    }}},c);
+    chipsBox.append(b);
+  });
+  moveLens(chipsBox,true);
+}
+
+/* source filter row */
+const srcsBox=$('srcs');
+function buildSrcChips(){
+  if(!srcsBox)return;
+  srcsBox.replaceChildren();
+  srcsBox.append(el('i',{class:'lens'}));
+  const entries=[['wiki','Wikimedia'],['all','All 11 sources'],['fav','♥ Favourites']]
+    .concat(SRC_DEFS.map(d=>[d.id,d.name]));
+  entries.forEach(([id,label])=>{
+    const b=el('button',{type:'button','data-src':id,class:id===feedMode?'on':'',
+      on:{click:e=>{
+        const btn=e.currentTarget;
+        srcsBox.querySelectorAll(':scope > button').forEach(x=>x.classList.toggle('on',x===btn));
+        feedMode=id;mcat='';
+        moveLens(srcsBox);
+        srcsBox.scrollTo({left:btn.offsetLeft-srcsBox.clientWidth/2+btn.offsetWidth/2,behavior:'smooth'});
+        buildChips();
+        start(term);
+      }}},label);
+    srcsBox.append(b);
+  });
+  moveLens(srcsBox,true);
+}
+buildSrcChips();
 buildChips();
 $('form').addEventListener('submit',e=>{
   e.preventDefault();const v=$('q').value.trim();if(!v)return;
@@ -1196,16 +1622,18 @@ function fillModal(d){
   $('wTitle').textContent=d.title;
   pimg.alt=d.title;pimg.src=d.thumb;
   const big=new Image();big.onload=()=>{if(curData===d)pimg.src=big.src};
-  big.src=d.w>1280?resize(d.thumb,1280):d.original;
+  big.src=(d.src&&d.src!=='wiki')?d.original:(d.w>1280?resize(d.thumb,1280):d.original);
   $('pbadge').textContent=d.w+' × '+d.h+' · '+d.license;
+  const ext=!!(d.src&&d.src!=='wiki');
   const rows=[
-    kv(t('k_artist'),d.artist),
+    kv(t('k_artist'),d.artistUrl?link(d.artistUrl,d.artist+' ↗'):d.artist),
     kv(t('k_res'),d.w+' × '+d.h+' px ('+(d.w*d.h/1e6).toFixed(1)+' MP)'),
     kv(t('k_cat'),d.cat||'Commons'),
+    ext?kv('Source',d.srcHome?link(d.srcHome,d.srcName+' ↗'):d.srcName):null,
     d.size?kv(t('k_size'),fmtBytes(d.size)):null,
     d.date?kv(t('k_date'),d.date):null,
     kv(t('k_license'),link(d.licenseUrl,d.license)),
-    kv(t('k_source'),link(d.page,t('src_page'))),
+    kv(t('k_source'),link(d.page,ext?'View original ↗':t('src_page'))),
     d.desc?el('p',{class:'para'},d.desc.length>380?d.desc.slice(0,380)+'…':d.desc):null];
   $('p-info').replaceChildren(...rows.filter(Boolean));
   $('p-credit').replaceChildren(
@@ -1213,12 +1641,33 @@ function fillModal(d){
     el('p',{class:'note'},t('credit_note',{artist:d.artist,lic:d.license})),
     el('div',{class:'actions',style:'padding:0'},
       el('button',{class:'btn press',type:'button',on:{click:async()=>{await copyText(creditText(d));toast(t('t_copied'))}}},el('span',{class:'lbl'},t('copy_credit'))),
+      el('button',{class:'btn press',type:'button',on:{click:()=>toggleFav(d)}},el('span',{class:'lbl'},isFav(d)?'♥ Saved':'♡ Favourite')),
       el('button',{class:'btn press',type:'button',on:{click:()=>openCredits()}},el('span',{class:'lbl'},t('all_credits')))));
-  $('p-use').replaceChildren(el('ul',{class:'steps'},
+  const useKids=[];
+  if(window.Wallpaper&&window.Wallpaper.set){
+    const setW=which=>async ev=>{
+      const btn=ev&&ev.currentTarget;
+      if(btn)btn.disabled=true;
+      toast('Setting wallpaper…');
+      try{
+        const url=await bigUrl(d,1920);
+        const r=String(await Promise.resolve(window.Wallpaper.set(url,which))||'');
+        if(r.indexOf('started')===0)return;      /* final result arrives through __wallResult */
+        toast(/^ok/i.test(r)?'✅ Wallpaper set':'⚠️ '+(r||'Could not set wallpaper'));
+      }catch(e){toast('⚠️ Could not set wallpaper')}
+      if(btn)btn.disabled=false;
+    };
+    useKids.push(el('div',{class:'actions',style:'padding:0 0 10px;flex-wrap:wrap'},
+      el('button',{class:'btn press',type:'button',on:{click:setW('home')}},el('span',{class:'lbl'},'📱 Home screen')),
+      el('button',{class:'btn press',type:'button',on:{click:setW('lock')}},el('span',{class:'lbl'},'🔒 Lock screen')),
+      el('button',{class:'btn press',type:'button',on:{click:setW('both')}},el('span',{class:'lbl'},'✨ Both'))));
+  }
+  useKids.push(el('ul',{class:'steps'},
     el('li',{},'📱 iPhone: Download → Photos me kholo → Share → Use as Wallpaper'),
     el('li',{},'🤖 Android: Gallery me kholo → ⋮ → Set as wallpaper'),
     el('li',{},'🪟 Windows: Image par right-click → Set as desktop background'),
     el('li',{},'🍎 macOS: Right-click → Set Desktop Picture')));
+  $('p-use').replaceChildren(...useKids);
   $('dlHD').querySelector('.lbl').textContent=t('dl_hd')+' · '+Math.min(d.w,1920)+'px';
   $('dlOrig').querySelector('.lbl').textContent=t('dl_orig')+' · '+d.w+'×'+d.h;
   showTab('info',true);
@@ -1337,6 +1786,7 @@ photo.addEventListener('pointermove',e=>{
 /* ================= downloads ================= */
 const hdCache=new Map();
 async function bigUrl(d,w){
+  if(d.src&&d.src!=='wiki')return d.original;
   if(d.w<=w)return d.original;
   const key=d.id+'@'+w;if(hdCache.has(key))return hdCache.get(key);
   const url=resize(d.thumb,w);hdCache.set(key,url);return url;
@@ -1400,7 +1850,8 @@ const SCHEMA=()=>([
   {k:'theme',t:'seg',l:t('l_theme'),opts:[['auto',t('o_auto')],['dark',t('o_dark')],['light',t('o_light')]]},
   {k:'lang',t:'lang',l:'Language'},
   {k:'fullscreen',t:'switch',l:t('l_full'),sub:'Browser ka toolbar chhupao (F)'},
-  {k:'bgfx',t:'switch',l:t('l_bg')}]}
+  {k:'bgfx',t:'switch',l:t('l_bg')}]},
+ {h:'🌐 Image sources',rows:SRC_DEFS.map(d=>({k:'src_'+d.id,t:'src',l:d.name,sub:d.lic,src:d}))}
 ]);
 let reloadT=0;
 function changed(r){apply();save();if(r.k==='fullscreen')toggleAppFs();if(r.reload){clearTimeout(reloadT);reloadT=setTimeout(()=>start(term),400)}}
@@ -1421,6 +1872,28 @@ function buildRow(r){
       S[r.k]=v;b.classList.toggle('on',v);b.setAttribute('aria-checked',v?'true':'false');changed(r);
     });
     row.append(el('div',{class:'sl'},el('span',{},r.l,r.sub?el('small',{},r.sub):null),b));
+  }else if(r.t==='src'){
+    const d=r.src;
+    const b=el('button',{class:'sw press'+(SRC_ON.has(d.id)?' on':''),type:'button',role:'switch',
+      'aria-checked':SRC_ON.has(d.id)?'true':'false','aria-label':d.name},el('i'));
+    b.addEventListener('click',()=>{
+      const v=!SRC_ON.has(d.id);
+      if(v)SRC_ON.add(d.id);else SRC_ON.delete(d.id);
+      saveSrcOn();b.classList.toggle('on',v);b.setAttribute('aria-checked',v?'true':'false');
+      toast(v?d.name+' on':d.name+' off');
+    });
+    row.append(el('div',{class:'sl'},el('span',{},d.name,r.sub?el('small',{},r.sub):null),b));
+    if(d.key){
+      const inp=el('input',{type:'password',placeholder:'API key for '+d.name,value:KEYS[d.id]||'',
+        'aria-label':d.name+' API key',autocomplete:'off',spellcheck:'false'});
+      let tmr=0;
+      inp.addEventListener('input',()=>{clearTimeout(tmr);tmr=setTimeout(()=>{
+        KEYS[d.id]=inp.value.trim();saveKeys();
+        toast(inp.value.trim()?d.name+' key saved':d.name+' key cleared');
+      },600)});
+      row.append(el('div',{class:'krow'},inp,el('a',{href:d.keyUrl,target:'_blank',rel:'noopener noreferrer'},'get key ↗')));
+    }
+    return row;
   }else if(r.t==='lang'){
     const b=el('button',{class:'langbtn press',type:'button',on:{click:()=>{closePop();setTimeout(openLangs,180)}}},
       el('span',{class:'lgl'},'🌐'),el('span',{},langName(LANG)));
@@ -1517,7 +1990,7 @@ function openCredits(){
   if(credOpen)return;
   credOpen=true;root.classList.add('lock');
   cdim.style.display='block';cbox.style.display='flex';
-  credSrc=allNorm();credFilter='';credShown=0;
+  credSrc=(feedMode!=='wiki'&&pool.length)?pool.slice():allNorm();credFilter='';credShown=0;
   $('cq').value='';$('clist').replaceChildren();
   renderCredits(80);
   $('clist').scrollTop=0;
@@ -1665,6 +2138,17 @@ async function loadFreshPage(){
 }
 
 async function refreshFeed(){
+  if(feedMode!=='wiki'){
+    if(refreshing)return;
+    refreshing=true;pullBusy(true);refreshBtn.classList.add('busy');
+    try{
+      multiReset();mseen=new Set();clearGrid();pos=0;
+      await multiLoad(true);
+      if(pool.length)toast(t('t_fresh',{n:pool.length}));else toast(t('t_uptodate'));
+      lastSync=Date.now();
+    }finally{refreshing=false;pullBusy(false);refreshBtn.classList.remove('busy')}
+    return;
+  }
   if(refreshing)return;
   refreshing=true;pullBusy(true);refreshBtn.classList.add('busy');
   const my=token;
@@ -1705,6 +2189,7 @@ function applyFresh(){
 newPill.addEventListener('click',applyFresh);
 
 async function checkFresh(){
+  if(feedMode!=='wiki'){await multiCheckFresh();return}
   if(!S.live||!navigator.onLine||refreshing||isOpen||mode==='fresh'||loading)return;
   if(document.hidden||Date.now()<apiCooldown)return;
   try{
@@ -1881,9 +2366,11 @@ if(lw){
   lw.addEventListener('pointerleave',()=>tilt(0,0));
 }
 
+
 /* ================= boot ================= */
 if(S.gyro){if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function')S.gyro=false;else enableGyro(true)}
-apply();buildPop();
+window.__wallResult=m=>{try{toast(/^ok/i.test(String(m))?'✅ Wallpaper set':'⚠️ '+(m||'Could not set wallpaper'))}catch(e){}};
+apply();buildPop();buildSrcChips();
 moveLens(chipsBox,true);
 if(document.fonts&&document.fonts.ready)document.fonts.ready.then(()=>moveLens(chipsBox,true));
 start(term);
