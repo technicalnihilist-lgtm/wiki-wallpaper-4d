@@ -3,6 +3,32 @@
 Every change below keeps the UI, layout, wording and features exactly as they are.
 Only correctness, stability and speed change.
 
+## v5.3.1 — 2026-11-04
+**Favourites view, quota handling and the scroll loader fixed — the UI is unchanged**
+- **Un-favouriting a card duplicated the whole grid.** In the ♥ Favourites view `favLoad()` never cleared
+  the grid, and `renderChunk()` appends from `pos=0`, so every favourite or unfavourite appended the entire
+  list on top of the one already there. Measured in headless Chromium against the live CDN: 3 favourites,
+  open one card, un-favourite it — **5 cards** before, **2 cards** after.
+- **Refresh emptied the favourites view.** `refreshFeed()` sent the favourites view through `multiLoad()`,
+  whose `activeSources()` list is empty for that view, after `clearGrid()` had already wiped the grid, so
+  the view went to **0 cards showing "😕 Nothing found — try another keyword or filter"** while toasting
+  "Already up to date". The favourites view now re-renders from localStorage and toasts; measured
+  **3 → 0 cards + "Nothing found"** before, **3 cards and no status message** after.
+- **A spent daily quota answered with 429 was never recognised as quota.** The generic `429/503` back-off in
+  `getJSON()` threw before the quota-body check, so a quota-exhausted source was counted as a failure twice
+  and removed from the chip row instead of being paused for an hour. The quota check now runs first and the
+  generic back-off only after it.
+- **The scroll loader forced a full relayout on every tick.** `checkSentinel()` called
+  `getBoundingClientRect()` on the sentinel for every throttled scroll tick, and that read relayouts the
+  whole grid. It now reuses the rect the `IntersectionObserver` already reports. Measured over a 12-step,
+  16,800 px scroll: **31 forced layout reads** in the previous file, **0** now — while the grid still grows
+  as you scroll (168 → 618 cards) and images keep loading (32 → 99 loaded faces).
+- **Nothing visual changed.** At 1280×900 the first screen of the previous file and of this release are
+  pixel-identical — **0 of 1,152,000 pixels differ** — with identical element geometry, computed styles,
+  fonts, colours, radii, shadows, wording, chips, icons and animations. A 12-step scroll and four category
+  switches (Cars, Animal, Art, Cartoons) finished with **0 console errors**, every request 200, and images
+  still loading afterwards (21 → 40 loaded faces in the 3 s after the last switch).
+
 ## v5.3.0 — 2026-11-03
 **Six new languages, and a worldwide collection (6,288 wallpapers)**
 - **Languages: 9 → 15.** Spanish, French, German, Portuguese, Japanese and Chinese join English, Gujarati,
