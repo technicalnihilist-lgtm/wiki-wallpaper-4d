@@ -3,6 +3,44 @@
 Every change below keeps the UI, layout, wording and features exactly as they are.
 Only correctness, stability and speed change.
 
+## v5.0.0 — 2026-11-03
+**11 new wallpaper sources, unified search, full creator credits, favourites and real wallpaper setting**
+- **Sources added alongside Wikimedia (never replacing it):** Openverse, Flickr Creative Commons, NASA Images,
+  Smithsonian Open Access, Rijksmuseum, Cleveland Museum of Art, Art Institute of Chicago, Europeana,
+  Library of Congress, Internet Archive and The Met. Each one talks to its own official API; Wikimedia's
+  existing embedded library and Commons live search are untouched.
+- **Unified feed.** A new glass source row under the category chips: Wikimedia (default), *All 11 sources*,
+  ♥ Favourites, then each source on its own. Results from every enabled source are fetched in parallel and
+  **interleaved** so the grid mixes them instead of showing one source at a time. Duplicates are dropped by
+  item id *and* by normalised image URL.
+- **15 wallpaper categories** (Nature, Mountains, Space & Galaxy, Ocean, Animals, Flowers, Cars & Bikes,
+  Architecture, Minimal & Abstract, Digital Art, Vintage Photography, Paintings, Indian Culture, Dark AMOLED,
+  Illustrations) replace the Wikimedia category row while a non-Wikimedia source is selected; Wikimedia keeps
+  its original category chips exactly as before.
+- **Credits.** The preview now shows creator (linked to the creator's profile where the API provides one),
+  original title, source platform (linked), original image page, licence name and licence URL — all clickable.
+  The copy-credit line names the real source. Nothing is ever invented: when an API gives no creator the item
+  says "Unknown creator" rather than guessing.
+- **Licence gate.** Only CC0, Public Domain, CC BY and CC BY-SA material is accepted; `by-nc`, `by-nd` and
+  unlicensed items are filtered out per source (Internet Archive items must carry an explicit Creative Commons
+  licence URL; Cleveland and The Met must report CC0 / public domain).
+- **Live.** The 150 s background poll and the refresh button now work across the selected sources, so newly
+  published wallpapers arrive on their own.
+- **Favourites** are stored with their credit block (localStorage, last 300) and get their own filter chip.
+- **Settings → 🌐 Image sources**: per-source on/off switches and API-key fields with "get key" links for the
+  four sources that require one (Flickr, Smithsonian, Rijksmuseum, Europeana). Keys are stored only on the
+  device (localStorage) — there is no server to hold them, and none is sent anywhere except that source's API.
+- **Android: set wallpaper for real.** New `Wallpaper.set(url, 'home'|'lock'|'both')` JS bridge in the shell —
+  downloads and downsamples off the UI thread, applies via `WallpaperManager` (FLAG_SYSTEM / FLAG_LOCK) and
+  reports back asynchronously. The "Set wallpaper" tab shows Home / Lock / Both buttons when the bridge exists
+  and the old instructions when it does not.
+- **Verified:** Wikimedia regression (172 thumbnails, all 200, search + categories + preview unchanged);
+  NASA and Internet Archive exercised against their live APIs from this build; all 11 parsers exercised
+  end-to-end with recorded/documented response payloads (54 wallpapers across all 11 sources, credit block
+  correct for each, 0 console errors).
+- **Not in this release:** a dedicated crop/position editor and an offline store for downloaded files — both
+  need their own screens and are left for a follow-up rather than half-built here.
+
 ## v4.9.2 — 2026-11-03
 **Performance pass: the image pipeline was effectively serial, and interaction paths thrashed layout**
 - **The loader never reached its own concurrency.** `pumpImgs()` starts one image per tick and expects
