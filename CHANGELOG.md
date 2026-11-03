@@ -3,6 +3,28 @@
 Every change below keeps the UI, layout, wording and features exactly as they are.
 Only correctness, stability and speed change.
 
+## v5.1.0 — 2026-11-03
+**Wikimedia library doubled to 4,487 wallpapers — and broken sources now remove themselves**
+- **Library 2,322 → 4,487** (+2,165 new images), with 19 new topics on top of the old set: Cars (116),
+  Motorcycles (129), Art (128), Animal (170), Cartoons (129), Anime & Manga (78), Robots (124),
+  Spacecraft (123), Aircraft (53), Trains (112), Ships (128), Castles (108), Street art (130),
+  Underwater (77), Aurora (144), Volcano (132), City (186), Neon (127), Food (127).
+  Every new entry was pulled from the Commons API with its **real** creator, licence name, licence URL and
+  file page; nothing was invented and no entry is included without an Artist and a licence. Filters applied:
+  JPEG/PNG/WebP only, at least 1600×900, photo-like aspect ratio (0.5–2.2), and maps / diagrams / charts /
+  logos / posters / scans / certificates / coats of arms rejected by title.
+- **Category chips** now lead with the topics that were missing — Cars, Animal, Art, Cartoons, Robots,
+  Anime & Manga, Motorcycles — then the rest by image count (28 chips). A category with no translation now
+  falls back to a readable name instead of showing a raw `c_xxx` key.
+- **Sources that return no images remove themselves.** Each fetch retries once; two failed attempts with no
+  success marks the source dead, hides its chip, rebuilds the row and says so in a toast (the mark persists).
+  Turning the source back on in Settings clears it. Key-only sources (Flickr, Smithsonian, Rijksmuseum,
+  Europeana) stay hidden until a key is entered, so the row only ever lists sources that really work.
+  The "All sources" chip and the meta line now show the live count instead of claiming 11.
+- Verified with a harness where six sources are made to fail: after one load the row shrank from 7 sources to
+  the single working one, with the rest of the feed unaffected. Wikimedia untouched: 60 cards on boot,
+  chips and preview unchanged; boot on the bigger dataset 2.0 s → 2.2 s in the test container.
+
 ## v5.0.0 — 2026-11-03
 **11 new wallpaper sources, unified search, full creator credits, favourites and real wallpaper setting**
 - **Sources added alongside Wikimedia (never replacing it):** Openverse, Flickr Creative Commons, NASA Images,
