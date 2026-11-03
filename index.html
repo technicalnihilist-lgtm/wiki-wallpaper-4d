@@ -1034,12 +1034,17 @@ function more(){
   if(!liveDone&&S.more&&navigator.onLine){loadLive();return}
   if(!loading)showStatus(pool.length?'end':'empty');
 }
-let sentinelRaf=0,sentinelBusy=false,sentinelAt=0,sentinelT=0;
+let sentinelRaf=0,sentinelBusy=false,sentinelAt=0,sentinelT=0,sentNear=false,sentKnown=false;
 function checkSentinel(){
   if(sentinelBusy)return;
   const s=$('sentinel');
   if(!s)return;
-  if(s.getBoundingClientRect().top<innerHeight+900){
+  /* The IntersectionObserver below already measures the sentinel and hands us that rect, so the
+     scroll path does not need to ask the browser "where is it?" again: that read forced a full
+     relayout of the whole grid on every throttled scroll tick. Only used as a fallback until the
+     observer has reported once. */
+  const near=sentKnown?sentNear:(s.getBoundingClientRect().top<innerHeight+900);
+  if(near){
     sentinelBusy=true;
     try{more()}finally{setTimeout(()=>{sentinelBusy=false},60)}
   }
@@ -1056,7 +1061,13 @@ addEventListener('scroll',onScrollCheck,{passive:true});
 addEventListener('resize',onScrollCheck,{passive:true});
 addEventListener('orientationchange',onScrollCheck,{passive:true});
 if('IntersectionObserver' in window){
-  const so=new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting))checkSentinel()},{rootMargin:'900px'});
+  const so=new IntersectionObserver(es=>{
+    /* inside the band, or already scrolled past it (top goes negative) — both mean "fill now" */
+    let near=false;
+    for(const e of es)if(e.isIntersecting||e.boundingClientRect.top<innerHeight+900)near=true;
+    sentNear=near;sentKnown=true;
+    if(near)checkSentinel();
+  },{rootMargin:'900px'});
   so.observe($('sentinel'));
   window.__so=so;
 }
@@ -1159,12 +1170,16 @@ async function getJSON(url,ms){
   const t=setTimeout(()=>{try{ac.abort()}catch(e){}},ms||9000);
   try{
     const r=await fetch(url,{signal:ac?ac.signal:undefined,mode:'cors',credentials:'omit',referrerPolicy:'no-referrer'});
-    if(r.status===429||r.status===503){hostUntil[host]=Date.now()+90000;throw new Error('HTTP '+r.status)}
-    if(r.status===403||r.status===429){
+    if(r.status===403||r.status===429||r.status===503){
+      /* A quota / daily-limit answer is not a broken source — the caller pauses it for an hour
+         instead of removing it. That check has to happen before the generic rate-limit back-off:
+         Google answers a spent daily quota with 429, and the old order threw on 429 first, so the
+         source was counted as failed twice and dropped out of the chip row. */
       let body='';try{body=await r.text()}catch(e){}
       if(/quota|rate limit|daily limit|exceeded/i.test(body)){
         const e=new Error('quota');e.quota=true;throw e;
       }
+      if(r.status===429||r.status===503)hostUntil[host]=Date.now()+90000;
       throw new Error('HTTP '+r.status);
     }
     if(!r.ok)throw new Error('HTTP '+r.status);
@@ -1535,6 +1550,10 @@ async function multiCheckFresh(){
 }
 
 function favLoad(){
+  /* the grid still holds the cards rendered for the previous pool, and renderChunk() appends
+     from pos=0 — without this, every favourite/unfavourite made in this view appended the whole
+     list again on top of the old one (3 favourites became 5 cards after one removal) */
+  clearGrid();
   pool=FAVS.slice().reverse();pos=0;
   renderChunk(pool.length);
   showStatus(pool.length?'':'empty');
@@ -2232,6 +2251,15 @@ async function loadFreshPage(){
 }
 
 async function refreshFeed(){
+  if(feedMode==='fav'){
+    /* favourites live in localStorage: there is no source to re-fetch, and going through
+       multiLoad() cleared the grid and left "Nothing found" behind instead of the list */
+    if(refreshing)return;
+    refreshing=true;pullBusy(true);refreshBtn.classList.add('busy');
+    try{favLoad();toast(t('t_uptodate'))}
+    finally{refreshing=false;pullBusy(false);refreshBtn.classList.remove('busy');updateMeta()}
+    return;
+  }
   if(feedMode!=='wiki'){
     if(refreshing)return;
     refreshing=true;pullBusy(true);refreshBtn.classList.add('busy');
