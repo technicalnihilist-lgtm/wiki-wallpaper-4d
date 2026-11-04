@@ -903,7 +903,8 @@ function applyTilt(){
 
 /* ================= feed ================= */
 let term='',pool=[],pos=0,liveOffset=0,liveDone=false,loading=false,token=0,seen=new Set(),seenT=new Set(),ctrl=null,
-    mode='search',freshCont=null,pendingFresh=[],lastSync=0,refreshing=false;
+    mode='search',freshCont=null,pendingFresh=[],lastSync=0,refreshing=false,
+    poolCat=false;   /* true when the filter came from a category chip (exact category, not text) */
 /* Everything already shown or already announced as "new" for this session. `seen`/`seenT` are
    rebuilt by start() for the current filter only, which made the same images come back as "new"
    after every category switch; this pair is never reset. */
@@ -951,8 +952,18 @@ function hayOf(d){
   if(h===undefined){h=(d.title+' '+d.artist+' '+d.cat+' '+d.desc+' '+d.license).toLowerCase();HAY.set(d,h)}
   return h;
 }
-function buildPool(){
+/* Does an image belong to the current filter?
+   A category chip is an exact category, not a text search: matching the category name as a
+   substring anywhere in the credit line made "Art" return 797 wallpapers of which only 128
+   were art (it matched every "artist", "earth", "smart" and "quarter"), "City" 289 of 186,
+   "Japan" 179 of 101, and "Cars" pulled in castles by photographers called Carsten.
+   A typed search still matches titles, creators and descriptions, as before. */
+function inPool(d){
+  if(poolCat&&catCount[term])return d.cat===term;
   const words=(term||'').trim().toLowerCase().split(/\s+/).filter(Boolean);
+  return !words.length||words.every(w=>hayOf(d).includes(w));
+}
+function buildPool(){
   const min=S.minres;
   pool=[];
   for(const d of allNorm()){
@@ -960,7 +971,7 @@ function buildPool(){
     if(long<min||short<min*.55)continue;
     if(S.orient==='portrait'&&d.h<d.w*1.05)continue;
     if(S.orient==='landscape'&&d.w<d.h*1.05)continue;
-    if(words.length&&!words.every(w=>hayOf(d).includes(w)))continue;
+    if(!inPool(d))continue;
     pool.push(d);seen.add(d.id);seenT.add(d.title.toLowerCase());
   }
 }
@@ -979,7 +990,7 @@ function updateMoreBtn(){
   const b=$('moreBtn');
   if(!b)return;
   const left=pool.length-pos;
-  const canLoad=left>0||(!liveDone&&S.more&&mode!=='fresh')||(mode==='fresh'&&!!freshCont);
+  const canLoad=left>0||(feedMode!=='fav'&&!liveDone&&S.more&&mode!=='fresh')||(mode==='fresh'&&!!freshCont);
   const sig=LANG+'|'+left+'|'+canLoad;
   if(sig===moreSig)return;
   moreSig=sig;
@@ -1019,6 +1030,14 @@ async function loadLive(){
   }
 }
 function more(){
+  /* favourites are read from localStorage: there is no source to page through, and
+     activeSources() is empty for this view, so falling through to multiLoad() answered
+     "Nothing found" underneath a perfectly good list of favourites */
+  if(feedMode==='fav'){
+    if(pos<pool.length){renderChunk(18);setTimeout(checkSentinel,80);return}
+    showStatus(pool.length?'':'empty');
+    return;
+  }
   if(feedMode!=='wiki'){
     if(pos<pool.length){renderChunk(18);setTimeout(checkSentinel,80);return}
     if(!mloading&&navigator.onLine){multiLoad(false);return}
@@ -1079,9 +1098,14 @@ setInterval(()=>{
   checkSentinel();
 },1200);
 
-function start(t){
+function start(t,exactCat){
   term=t||'';
+  if(exactCat!==undefined)poolCat=!!exactCat;
   mode=(term==='#fresh')?'fresh':'search';
+  /* '#fresh' means "newest Wikimedia uploads" and only the Wikimedia feed understands it;
+     carried into a source view it went out as q=%23fresh, so every source returned nothing
+     and the meta line read «"#fresh"» */
+  if(feedMode!=='wiki'&&term==='#fresh')term='';
   token++;if(ctrl)ctrl.abort();ctrl=new AbortController();
   pos=0;liveOffset=0;liveDone=false;loading=false;seen=new Set();revealN=0;pool=[];
   freshCont=null;pendingFresh=[];moreSig='';if(typeof hideNewPill==='function')hideNewPill();
@@ -1655,7 +1679,7 @@ function renderChips(){
       box.querySelectorAll(':scope > button[data-cat]').forEach(x=>x.classList.toggle('on',x===btn));
       $('q').value='';moveLens(box);
       box.scrollTo({left:btn.offsetLeft-box.clientWidth/2+btn.offsetWidth/2,behavior:'smooth'});
-      if(feedMode==='wiki')start(c==='All'?'':c==='🆕 Naye'?'#fresh':c.toLowerCase());
+      if(feedMode==='wiki')start(c==='All'?'':c==='🆕 Naye'?'#fresh':c.toLowerCase(),true);
       else{mcat=(c==='All')?'':c;start('')}
     }}},feedMode==='wiki'?chipLabel(c):c);
     box.append(b);
@@ -1684,7 +1708,7 @@ renderChips();
 $('form').addEventListener('submit',e=>{
   e.preventDefault();const v=$('q').value.trim();if(!v)return;
   chipsBox.querySelectorAll(':scope > button').forEach(x=>x.classList.remove('on'));moveLens(chipsBox);
-  $('q').blur();start(v);
+  $('q').blur();start(v,false);
 });
 $('title').addEventListener('click',()=>scrollTo({top:0,behavior:'smooth'}));
 
@@ -2278,7 +2302,7 @@ async function refreshFeed(){
     const items=await fetchFresh(40,true);
     if(my!==token)return;
     cacheFresh(items);
-    const add=items.filter(d=>!isOffered(d)&&!seen.has(d.id)&&!seenT.has(tkey(d.title)));
+    const add=items.filter(d=>!isOffered(d)&&!seen.has(d.id)&&!seenT.has(tkey(d.title))&&inPool(d));
     add.forEach(d=>{d.fresh=true;seen.add(d.id);markOffered(d)});
     if(add.length){
       pool.unshift(...add);pos=0;clearGrid();
@@ -2316,7 +2340,7 @@ async function checkFresh(){
   if(document.hidden||Date.now()<apiCooldown)return;
   try{
     const items=await fetchFresh(24);
-    const add=items.filter(d=>!isOffered(d)&&!seen.has(d.id)&&!seenT.has(tkey(d.title)));
+    const add=items.filter(d=>!isOffered(d)&&!seen.has(d.id)&&!seenT.has(tkey(d.title))&&inPool(d));
     lastSync=Date.now();
     if(add.length){pendingFresh=add;showNewPill(add.length)}
     updateMeta();
