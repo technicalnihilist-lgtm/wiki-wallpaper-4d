@@ -3,6 +3,45 @@
 Every change below keeps the UI, layout, wording and features exactly as they are.
 Only correctness, stability and speed change.
 
+## v5.3.2 — 2026-11-05
+**Category chips now return the category, the favourites view stops claiming it is empty**
+- **A category chip matched its name as a substring of the whole credit line.** `buildPool()` tested
+  `hay.includes(word)` over title + creator + category + description + licence, so "art" matched every
+  "artist", "earth", "smart" and "quarter", "city" matched "electricity", "japan" matched "Japanese"
+  names, and "cars" pulled in castles because their photographers are called **Carsten** and
+  **Carschten**. Measured on the embedded list: the **Art** chip offered **832** wallpapers of which
+  only **128** were art (**704** wrong), **City** 299 of 186, **Japan** 209 of 101, **India** 191 of 133,
+  **Cars** 136 of 116 — the first three Art cards were a butterfly, an Earth-at-night composite and a
+  frog. A category chip is now an exact category match (`d.cat === term`); a typed search still matches
+  titles, creators and descriptions exactly as before ("ansel adams" → 2 wallpapers, "art" typed in the
+  search box → 797 mixed results, unchanged). After: **Art 128, City 186, Japan 101, India 133,
+  Cars 116** real matches (+ whatever the live Commons feed adds at the end), and the first Art cards
+  are paintings. Scrolling the Art view now renders **252** cards over a 10-step scroll instead of
+  **491**, because the view no longer queues 704 wallpapers that do not belong to it.
+- **The favourites view announced "😕 Nothing found — try another keyword or filter" under a list of
+  favourites, and showed a dead "Load more from Wikimedia ↓" button.** `more()` sent this view into
+  `multiLoad()`, whose `activeSources()` list is empty for favourites, so the very first sentinel check
+  answered "nothing found"; `updateMoreBtn()` computed `canLoad` from the live-feed rule, which is true
+  for this view. Measured with 3 favourites on screen: **"Nothing found" pill + visible button** before,
+  **no status pill and no button** after; the 3 cards stay put while scrolling and while pressing the
+  old button's position. Nothing about the grid, the chips or the cards changed.
+- **`#fresh` leaked out of the Wikimedia feed.** "🆕 Naye" is a Wikimedia pseudo-query; carried into a
+  source view it went out as `q=%23fresh` to every API and the meta line read `All sources (2) ·
+  "#fresh"` with 15 wallpapers. `start()` now drops the pseudo-term for non-Wikimedia feeds: the same
+  view reads `All sources (2)` and returns 16 live wallpapers.
+- **The live "🆕 N new wallpapers" offer respects the filter.** It is offered from the newest uploads
+  overall, so in a category view it could add a flower to the Cars feed; the poll and Refresh now skip
+  items the current filter excludes.
+- **Nothing visual changed.** The header markup, every chip label and class, the meta line, the tabs, the
+  settings sheet text, the CSS variables, and the computed style of the header, a card, a face and the
+  title are byte-identical between the two files, as are the geometry, title, credit and aspect ratio of
+  the first six cards. Real-CDN run at 1280×900: **0** HTTP 429, **0** failed requests (**427/427**
+  thumbnails 200), **0** console errors, **0** unhandled rejections; boot first card **1.80 s**, FCP
+  **820 ms**; 12-step scroll **528** cards with **182** images loaded.
+- One measurement worth recording: shrinking the backdrop image to a 250 px variant looked like a win
+  but **added 371 KB** of downloads per 24 hovers, because the 500 px thumbnail the backdrop uses is
+  already in the cache from the card that is being hovered. Reverted, not shipped.
+
 ## v5.3.1 — 2026-11-04
 **Favourites view, quota handling and the scroll loader fixed — the UI is unchanged**
 - **Un-favouriting a card duplicated the whole grid.** In the ♥ Favourites view `favLoad()` never cleared
