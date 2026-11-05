@@ -709,15 +709,17 @@ const allNorm=()=>ALLNORM||(ALLNORM=WALLS.map(norm));
 let lastApiAt=0,apiFails=0,apiCooldown=0;
 async function api(params,signal){
   const now=Date.now();
-  if(now<apiCooldown)throw new Error('cooldown');
+  if(now<apiCooldown){const e=new Error('cooldown');e.rateLimited=true;throw e}
   const gap=Math.max(0,lastApiAt+900-now);
   if(gap)await sleep(gap);
   lastApiAt=Date.now();
   const u=API+'?'+new URLSearchParams({format:'json',formatversion:'2',origin:'*',...params});
+  let limited=false;
   for(let i=0;i<3;i++){
     try{
       const r=await fetch(u,{signal});
       if(r.status===429||r.status>=500){
+        limited=true;
         if(r.status===429)apiCooldown=Date.now()+12000;
         await sleep(900*(i+1));continue;
       }
@@ -732,7 +734,7 @@ async function api(params,signal){
   }
   apiFails++;
   apiCooldown=Date.now()+Math.min(90000,5000*apiFails);
-  throw new Error('Network error');
+  const err=new Error('Network error');if(limited)err.rateLimited=true;throw err;
 }
 async function fetchPage(q,off,signal){
   const d=await api({action:'query',generator:'search',gsrsearch:q,gsrnamespace:6,gsrlimit:40,gsroffset:off,
@@ -1000,6 +1002,8 @@ function updateMoreBtn(){
 }
 async function loadLive(){
   if(loading||liveDone)return;
+  /* a 429 / back-off is temporary: retry once the cooldown passes instead of hammering the API */
+  if(Date.now()<apiCooldown)return;
   loading=true;const my=token;if(!pool.length)showStatus('loading');
   try{
     let added=0,guard=0;
@@ -1022,6 +1026,12 @@ async function loadLive(){
     showStatus('');
   }catch(e){
     if(my!==token||e.name==='AbortError')return;
+    /* a rate limit is not the end of the feed: the old code set liveDone here, so one burst of 429s
+       made the search view show "Nothing found" and never ask the API again for the whole session */
+    if(e&&e.rateLimited){
+      if(pool.length)showStatus('');else showStatus('error','Wikimedia se connect nahi hua');
+      return;
+    }
     liveDone=true;
     if(!pool.length)showStatus('error','Wikimedia se connect nahi hua');
     else showStatus('end');
@@ -1500,7 +1510,13 @@ function toggleFav(d){
   if(feedMode==='fav')favLoad();
 }
 
-function multiReset(){pool=[];pos=0;mcur={};msrcDone={};seenURLs=new Set()}
+function multiReset(){
+  pool=[];pos=0;mcur={};msrcDone={};seenURLs=new Set();
+  /* multiLoad() returns at once while a previous load is still running, and the new load's token
+     check then throws its result away — switching category mid-load left an empty grid with no
+     status and no way back. A reset throws the old page away, so its guard goes with it. */
+  mloading=false;
+}
 
 async function multiLoad(reset){
   if(mloading)return;
@@ -1554,6 +1570,7 @@ async function multiCheckFresh(){
   if(document.hidden)return;
   const srcs=activeSources().filter(pollDue);if(!srcs.length)return;
   const qs=mcat?catQuery(mcat):(term||'wallpaper');
+  const my=token,fm=feedMode;
   const res=await Promise.all(srcs.map(d=>{
     const page=((pollPage[d.id]||1)-1)%6+1;
     return FEED[d.id](qs,page)
@@ -1563,6 +1580,7 @@ async function multiCheckFresh(){
         noteFail(d.id);return null;
       });
   }));
+  if(my!==token||feedMode!==fm)return;      /* the view changed while we were polling */
   const fresh=[];
   for(const r of res){if(!r)continue;for(const it of (r.items||[]).slice(0,4)){
     if(isOffered(it))continue;const k=urlKey(it.original);
@@ -2288,6 +2306,7 @@ async function refreshFeed(){
     if(refreshing)return;
     refreshing=true;pullBusy(true);refreshBtn.classList.add('busy');
     try{
+      token++;                    /* the load still in flight belongs to the page we are discarding */
       multiReset();mseen=new Set();clearGrid();pos=0;
       await multiLoad(true);
       if(pool.length)toast(t('t_fresh',{n:pool.length}));else toast(t('t_uptodate'));
@@ -2338,8 +2357,10 @@ async function checkFresh(){
   if(feedMode!=='wiki'){await multiCheckFresh();return}
   if(!S.live||!navigator.onLine||refreshing||isOpen||mode==='fresh'||loading)return;
   if(document.hidden||Date.now()<apiCooldown)return;
+  const my=token;
   try{
     const items=await fetchFresh(24);
+    if(my!==token)return;                    /* the view changed while we were polling */
     const add=items.filter(d=>!isOffered(d)&&!seen.has(d.id)&&!seenT.has(tkey(d.title))&&inPool(d));
     lastSync=Date.now();
     if(add.length){pendingFresh=add;showNewPill(add.length)}
