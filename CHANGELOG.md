@@ -3,6 +3,61 @@
 Every change below keeps the UI, layout, wording and features exactly as they are.
 Only correctness, stability and speed change.
 
+## v5.3.3 — 2026-11-06
+**A burst of 429s no longer ends the live feed, and switching category while a source loads no longer
+leaves a blank page**
+
+- **One burst of HTTP 429s killed the live Wikimedia feed for the whole session.** `api()` retried a
+  `429`/`5xx` three times and then threw a plain `Error`, and `loadLive()` answered *any* error by
+  setting `liveDone = true`. From then on `more()` took the "no more to load" branch, so the view sat on
+  a finished-looking state and never asked the API again. Measured in headless Chromium against the live
+  CDN with the first 3 API responses replaced by a real CORS `429`: search **"ansel adams"** (2 embedded
+  matches) — before: **2 cards, "✨ That's all! Try another category or search", 3 API calls in total and
+  0 further calls** across three "Load more" presses, i.e. the feed was dead until reload; after: **2 → 72
+  → 105 cards**, requests resume (2–3 per press) and the pill honestly says *"Could not reach Wikimedia"*
+  while the API is still refusing. With an empty pool the same burst used to print
+  **"😕 Nothing found — try another keyword or filter"** — a search that never ran, reported as a search
+  that found nothing; it now reports the connection problem. The retry is not a spin: `loadLive()` returns
+  before doing anything while `apiCooldown` is running, so a 12 s back-off costs 0 requests instead of a
+  request every 80 ms.
+- **Switching category while a source view was still loading left the grid empty, for good.**
+  `multiLoad()` starts with `if(mloading)return;` and only clears that flag when its own request finishes,
+  while `start()` had already emptied the pool and bumped the token — so the new load returned immediately,
+  the old one threw its result away, and nothing rendered. Measured with 1.8 s of added latency on every
+  request, in the **All sources** view: press a category chip 0.9 s into the load — before: **0 cards for
+  the next 20 s** (and it only recovered if the user happened to scroll), the meta line still reading
+  *"6,288 wallpapers · all from Wikimedia Commons"* from the previous view, and no status at all; after:
+  **42 cards at 5 s**, meta *"42 wallpapers · All sources (2) · Nature"*. `multiReset()` now clears the
+  guard, because it is the function that throws the old page away.
+- **The same guard made Refresh lie in a source view.** `refreshFeed()` cleared the grid and then called
+  `multiLoad(true)`, which returned at once, so the toast said *"Already up to date"* over an empty grid.
+  It now also bumps the token, so a load still in flight for the discarded page can neither block the new
+  one nor append its items twice.
+- **A poll started for the previous view could fill the "🆕 N new wallpapers" pill of the new one.**
+  `multiCheckFresh()` and `checkFresh()` had no token check across their `await`, so a poll that began in
+  the old view wrote `pendingFresh` and raised the pill after the user had already switched; pressing it
+  unshifted those foreign items into the current pool, cleared the grid and re-rendered 30 cards. Both
+  now drop their result if the view changed while they were waiting.
+- **Nothing visual changed.** The markup, the whole `<style>` block (2,548,313 bytes of HTML+CSS), the
+  embedded wallpaper JSON and every i18n string are **byte-identical** to v5.3.2 — the diff is 3 JS lines
+  removed and 24 added, all inside error and race paths. Computed style and geometry of the header, the
+  chip row, the title, the first card/face/caption, the meta line and the modal are identical, and the top
+  180 px of the first screen is **pixel-identical** (the remaining differences are below the fold and come
+  from how many cards the boot filler had rendered by screenshot time, which varies run to run in both
+  builds). Real-CDN run at 1280×900: **0** HTTP 429, **0** failed requests (**127/127** thumbnails 200),
+  **0** console errors, **0** unhandled rejections; boot FCP **900 ms**, first card **2.48 s**; 12-step
+  scroll **600** cards with **127** images loaded. Favourites (3 → un-favourite from the modal → 2 cards,
+  no duplication), the Art category (192 cards), Refresh in both the wiki and the source view, and a
+  Japanese switch with the modal open (0 raw keys) all behave exactly as before.
+- Checked and found already fine, so not touched: **0** HTTP 429 from `thumb.wikimedia.org` over a
+  12-step scroll (the loader's 6-slot / 45 ms-gap budget holds); no card left stuck at
+  `visibility:hidden` after opening a card and pressing Escape inside the open animation, or after
+  ArrowRight + Escape; no leaked reveal animations (finished ones are dropped by the engine — 99 → 115
+  live animations over 14 scroll steps while the grid grew 186 → 564 cards). The scroll jank that remains
+  is the cost of inserting 18 glass cards per chunk (measured 84 ms at 186 cards, 107 ms at 564 — the
+  per-card style/raster work, not a growing re-layout) plus image decode; both are inherent to the design
+  and any change to them would alter how many cards appear per scroll, so they were left alone.
+
 ## v5.3.2 — 2026-11-05
 **Category chips now return the category, the favourites view stops claiming it is empty**
 - **A category chip matched its name as a substring of the whole credit line.** `buildPool()` tested
