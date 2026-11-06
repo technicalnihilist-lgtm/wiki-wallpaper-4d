@@ -3,6 +3,59 @@
 Every change below keeps the UI, layout, wording and features exactly as they are.
 Only correctness, stability and speed change.
 
+## v5.3.4 — 2026-11-07
+**Refresh can no longer wedge itself, and Escape no longer closes the window behind a sheet**
+
+- **Switching view during a Refresh left the refresh spinner on screen for the rest of the session
+  and made the Refresh button dead.** The Wikimedia branch of `refreshFeed()` reset `refreshing`,
+  the pull indicator and the button's busy ring inside `finally` — but only `if(my===token)`, and a
+  category/source switch bumps the token. The refresh was over, its UI state never was: `#pull`
+  kept `class="pull spin on"` with `opacity:1; transform:translate(-50%,calc(-160% + 84px))` (the
+  spinner parked over the header, reading *"Fetching the latest wallpapers…"*), `#refresh` kept
+  `.busy`, and `refreshing` stayed `true`, so every later Refresh press returned on its first line.
+  Measured in headless Chromium against the live CDN: press Refresh, switch to the **Art** chip
+  300 ms into the fetch — before: spinner and busy ring still there **6 s later**, and a second
+  Refresh press produced **0** `api.php` calls and no toast (grid frozen at 193 cards); after: the
+  pull indicator is back to `class="pull"` with its inline style cleared, and the next press makes
+  **3** API calls, answers *"✅ Already up to date"* and the meta line moves to *"synced just now"*.
+  The flag is a singleton for the one refresh that can be running, so it is now always cleared; only
+  the meta line (which describes the page that was refreshed) stays behind its token check.
+- **Escape with the credits sheet open over a wallpaper closed both, losing the wallpaper.**
+  Two `document` keydown handlers listen for Escape — the window's (`closeModal`) and the sheets'
+  (`closeCredits`, `closeLangs`) — and nothing stopped both from running, so one key press dismissed
+  the sheet *and* the window underneath it. Measured: open a card → **All credits** → Escape — before:
+  sheet `display:none` at 150 ms and by 800 ms `#overlay` also `none`, `lock` gone and the card's
+  `visibility:hidden` already undone, i.e. the wallpaper the user was reading was thrown away; after:
+  the sheet closes at 150 ms and the window stays open (`#overlay` still `flex`, `lock` still on) for
+  the full 3 s observation, a second Escape closes the window and restores the card (**0** cells left
+  hidden), and a third Escape does nothing. A sheet that is open on top now owns Escape; with no
+  sheet open the window closes exactly as before.
+- **Nothing visual changed.** Everything outside the single `<script>` block — all 2,548,313 bytes of
+  HTML+CSS, the embedded wallpaper JSON and every i18n string — is **byte-identical** to v5.3.3, and
+  the script diff is **2 lines removed, 11 added** (comments included), all inside an error path and
+  one keydown guard. Computed style and geometry of the header, the title, the search box, the chip
+  row, the meta line, a cell, a face and a caption are identical, and the top 190 px of the first
+  screen is pixel-identical (the only differing pixels are card thumbnails, whose paint order varies
+  run to run). Real-CDN run at 1280×900: **0** HTTP 429, **0** failed requests (**186/186**
+  thumbnails 200), **0** console errors, **0** unhandled rejections; boot FCP **880 ms**, first card
+  **2.28 s**; 12-step scroll **654** cards, **51** long tasks (9.7 s, max 796 ms). Favourites
+  (1 saved → removed from the modal → 0 cards), ArrowRight then Escape, Escape during the opening
+  animation, re-opening the same card, rapid chip switching (art → cars → japan → 131 cards, 0
+  duplicates) and an empty search (*"😕 Nothing found"*, then **All** back to 6,288) all behave
+  exactly as before.
+- Checked and found already fine, so not touched: **no memory leak** from the grid cells the
+  observers hold — 8 category switches with a forced GC leave the JS heap at **8.9 MB** (from 8.8 MB
+  at boot) and live DOM nodes at 2,373 (from 3,517), 1 document, so `clearGrid()` not unobserve-ing
+  costs nothing measurable. Long tasks were attributed with a CDP CPU profile: `pumpImgs` looked like
+  the hot spot (**683 ms** of self time) but instrumentation inside it shows **762** calls, **186**
+  image starts and **19 ms** spent in the `img.src` assignments, i.e. the sample was native
+  resource-setup work, not the pump. One change was tried and **rejected**: `contain:layout style` on
+  `.cell` — over the same 12-step scroll it gave **3.66 s** of layout and 48 long tasks (max 982 ms)
+  against **3.36 s** and 36 (max 712 ms) without it, so it is not shipped. The remaining scroll cost
+  is layout and paint of the glass cards themselves (one step at ~500 cards: **715 ms** of layout over
+  5 layouts, 95 ms of style, **16 ms** of script), which is the cost of inserting 18 cards per chunk
+  and would change what appears per scroll if touched.
+
 ## v5.3.3 — 2026-11-06
 **A burst of 429s no longer ends the live feed, and switching category while a source loads no longer
 leaves a blank page**
