@@ -2107,7 +2107,10 @@ document.addEventListener('pointerdown',e=>{
 document.addEventListener('keydown',e=>{
   if(e.key!=='Escape')return;
   if(fsMode){setFs(false);return}
-  if(popOpen)closePop();else if(isOpen)closeModal();
+  /* A sheet opened on top of the window (credits, language) owns Escape. Both handlers run, so
+     without this guard the window closed underneath the sheet and the wallpaper the user was
+     reading was thrown away by the same key press that dismissed the sheet. */
+  if(popOpen)closePop();else if(isOpen&&!credOpen&&!langOpen)closeModal();
 });
 addEventListener('resize',()=>{
   if(popOpen)placePop();moveLens(chipsBox,true);if(isOpen)moveLens(tabsBox,true);
@@ -2336,7 +2339,13 @@ async function refreshFeed(){
   }catch(e){
     toast(navigator.onLine?t('t_neterr'):t('t_offline'));
   }finally{
-    if(my===token){refreshing=false;pullBusy(false);refreshBtn.classList.remove('busy');updateMeta()}
+    /* The refresh belongs to the page that started it, but its UI state does not: `refreshing`,
+       the pull spinner and the busy ring are singletons for the one refresh that can be running.
+       When the view changed during the fetch the token no longer matched and this block was
+       skipped, so `refreshing` stayed true for the rest of the session — the pull indicator sat
+       on screen reading "Fetching the latest wallpapers…" and every later Refresh press returned
+       at once without asking the API. Only the meta line belongs to the old page. */
+    refreshing=false;pullBusy(false);refreshBtn.classList.remove('busy');if(my===token)updateMeta();
   }
 }
 
