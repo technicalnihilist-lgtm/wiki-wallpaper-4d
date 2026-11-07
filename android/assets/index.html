@@ -806,6 +806,24 @@ function retryImg(img,face){
   img.dataset.attempt=String(a+1);
   setTimeout(()=>{if(img.isConnected){imgQHi.unshift(img);pumpImgs()}},1200*Math.pow(2,a)+Math.random()*500);
 }
+/* Every failure above is learned from the network, and the back-off it builds (3 slots, a 200 ms
+   gap, up to 20 s of cooldown) is exactly right while the network is broken — but nothing ever
+   took it back once the network returned. A phone that lost signal for half a minute came back to
+   a gallery that sat empty for another 8 s and needed 18 s to fill, and any card that had already
+   used up its three retries stayed on the failed placeholder for the rest of the session, because
+   nothing re-queues a card after retryImg() gives up on it. The browser's `online` event is the
+   one moment we know for certain the network is back, so the learned back-off is dropped there and
+   the given-up cards of the visible band are queued again. No markup, geometry or wording changes:
+   the same images simply arrive sooner. */
+function reviveImgs(){
+  imgCooldown=0;imgFailStreak=0;imgOkStreak=0;IMG_MAX=6;IMG_GAP=45;
+  if(imgTimer){clearTimeout(imgTimer);imgTimer=0}
+  for(const face of grid.querySelectorAll('.cell[data-ld] .face.failed')){
+    const im=face.querySelector('img');if(!im)continue;
+    face.classList.remove('failed');delete im.dataset.attempt;imgQHi.unshift(im);
+  }
+  pumpImgs();
+}
 
 /* ================= grid ================= */
 const grid=$('grid');
@@ -1786,7 +1804,7 @@ function fillModal(d){
     el('p',{class:'note'},t('credit_note',{artist:d.artist,lic:d.license})),
     el('div',{class:'actions',style:'padding:0'},
       el('button',{class:'btn press',type:'button',on:{click:async()=>{await copyText(creditText(d));toast(t('t_copied'))}}},el('span',{class:'lbl'},t('copy_credit'))),
-      el('button',{class:'btn press',type:'button',on:{click:()=>toggleFav(d)}},el('span',{class:'lbl'},isFav(d)?'♥ Saved':'♡ Favourite')),
+      el('button',{class:'btn press',type:'button',on:{click:e=>{toggleFav(d);const l=e.currentTarget.querySelector('.lbl');if(l)l.textContent=isFav(d)?'♥ Saved':'♡ Favourite'}}},el('span',{class:'lbl'},isFav(d)?'♥ Saved':'♡ Favourite')),
       el('button',{class:'btn press',type:'button',on:{click:()=>openCredits()}},el('span',{class:'lbl'},t('all_credits')))));
   const useKids=[];
   if(window.Wallpaper&&window.Wallpaper.set){
@@ -2378,7 +2396,7 @@ async function checkFresh(){
 }
 setInterval(checkFresh,150000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&Date.now()-lastSync>90000)checkFresh()});
-addEventListener('online',()=>{updateMeta();toast(t('t_online'));checkFresh()});
+addEventListener('online',()=>{updateMeta();reviveImgs();toast(t('t_online'));checkFresh()});
 addEventListener('offline',()=>{updateMeta();toast(t('t_offline'))});
 refreshBtn.addEventListener('click',()=>refreshFeed());
 
