@@ -3,6 +3,63 @@
 Every change below keeps the UI, layout, wording and features exactly as they are.
 Only correctness, stability and speed change.
 
+## v5.3.5 — 2026-11-08
+**A reconnected phone fills the gallery in 8 s instead of 18 s, dead cards come back, and the
+Favourite button stops lying about what it saved**
+
+- **The image loader never gave its back-off back after the network returned.** Every failed
+  thumbnail teaches `retryImg()` to be more careful — `IMG_MAX` 6 → 3, `IMG_GAP` 45 → 200 ms and up
+  to 20 s of `imgCooldown` — which is right while the connection is broken, but nothing ever undid
+  it. Measured in headless Chromium against the live CDN (thumbnails and the API aborted for 30 s
+  with the app open, then released, which is what a phone does when it goes through a tunnel and
+  comes out): before, the grid showed **0 thumbnails for the first 8 s**, the first one arrived at
+  **+9 s** and the screen was full (**69** images) only at **+18 s**; after, **8** thumbnails are on
+  screen at **+1 s** and the screen is full (**70**) at **+8 s**. The browser's `online` event is the
+  one moment we know for certain the network is back, so `reviveImgs()` now drops the learned
+  back-off there (`IMG_MAX` 6, gap 45 ms, cooldown 0) and re-arms the pump.
+- **A card that had used up its three retries stayed on the failed placeholder for the rest of the
+  session.** `retryImg()` ends with `face.classList.add('failed')` and returns, and nothing
+  re-queues that `<img>` afterwards: `nearIO` had already stamped the cell with `data-ld`, so
+  scrolling the card out of the band and back in did not retry it either. In the same 30 s outage
+  measurement **1** card ended up in that state and was still failed at **+25 s**, i.e. 16 s after
+  the network was healthy again — a blank cell until the app was reloaded. `reviveImgs()` clears
+  `attempt` on the failed faces of the loaded band and puts them back at the front of the queue:
+  after the fix the failed count goes to **0** in the first second and stays there.
+- **The Favourite button never showed that it had saved.** `toggleFav()` writes localStorage and
+  toasts *"♥ Saved to favourites"*, but the button's label was built once inside `fillModal()` and
+  never touched again, so it kept offering to save something already saved until the window was
+  closed and reopened. Measured: click it on a card → `ww_favs` length **1**, label still
+  `♡ Favourite`; after: label is `♥ Saved` on the click and back to `♡ Favourite` on the second
+  click (`ww_favs` **1 → 0**). Same two strings as before, just shown at the right time.
+- **Nothing visual changed.** The 2,548,321 bytes of HTML+CSS that precede the single `<script>`
+  block and the 26 bytes after it — markup, all CSS, the embedded wallpaper JSON, every i18n
+  string — are **byte-identical** to v5.3.4, and the script diff is **2 lines changed, 18 added**
+  (comments included). Computed style and geometry of 23 elements (header, title, search box, chip
+  row, the chip lens, meta line, cell, card, face, caption, title, credit line, more button, the
+  three header buttons, the 4D logo, backdrop, status line, credits sheet, settings panel) across 22
+  properties each are identical, as are all seven CSS variables — the only difference anywhere is
+  the y of the more-button and the status line, which sit below the grid and follow how many cards
+  that run happened to have rendered. The top 190 px of the first screen differs by **33,196** px,
+  below the **40,748** px same-build run-to-run noise floor. Real-CDN run at 1280×900: **0** HTTP 429, **0** failed
+  requests, **0** console errors, **0** unhandled rejections; boot FCP **812 ms**, dcl **1,509 ms**,
+  first card **2.5 s**, 204 cards; 12-step scroll **600** cards, **14** long tasks (2.9 s, max
+  784 ms) — unchanged from v5.3.4's 18 tasks / 3.2 s, which is layout-bound, not script-bound.
+  Modal open → tabs → 3× ArrowRight → All credits → Escape → Escape, the settings popover, a
+  slider, the Lite switch, the language sheet (→ te), a search (*"ansel adams"*, 72 cards), an
+  empty search (*"😕 Nothing found"*), rapid chip switching (0 duplicates) and favourites all
+  behave exactly as before.
+- Checked and found already fine, so not touched: **the boot script's own hot spot** — `moveLens()`
+  runs **4** times during boot (the chip row is built twice, by the module-level `renderChips()`
+  and again by `buildSrcChips()` after `apply()`, and the lens is then measured twice more with
+  nothing changed in between). Removing the duplicates is 2 fewer `moveLens()` calls and one fewer
+  chip build, but three runs per build with stubbed thumbnails showed no boot difference outside
+  noise (long-task total 1,750 → 1,904 ms, first card 1,781 → 1,717 ms, cells 168 vs 204), so the
+  change was reverted rather than shipped as an unverified claim. **The 429 storm on thumbnails**
+  — 25 s of real `429`s left only 1 card failed, because the loader throttles itself to ~6 requests
+  in that window; no request was ever retried into a second storm. **The credits sheet** —
+  2,322 rows in 80/120-row batches, no growth beyond the data. **Scroll jank** — still the layout of
+  a non-virtualised grid, unchanged and not fixable without changing scroll behaviour.
+
 ## v5.3.4 — 2026-11-07
 **Refresh can no longer wedge itself, and Escape no longer closes the window behind a sheet**
 
