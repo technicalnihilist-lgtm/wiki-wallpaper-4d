@@ -243,16 +243,22 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        /* A sheet that is open on top owns Back, exactly as it owns Escape in the page: the
+           language sheet, the credits sheet and the settings popover are dismissed first, and the
+           wallpaper window underneath only closes when no sheet is above it. The old order tested
+           the overlay first, so Back over "All credits" threw away the wallpaper the user was
+           reading and left the sheet behind, and the language sheet was not tested at all, so
+           Back with it open left the app. */
         final String js =
             "(function(){try{" +
-            "var o=document.getElementById('overlay');" +
-            "if(o&&getComputedStyle(o).display!=='none'){" +
-            "  if(o.className.indexOf('fs')>-1){var b=document.getElementById('fsBtn');}" +
-            "  document.getElementById('tClose').click();return 'closed';}" +
+            "var l=document.getElementById('langs');" +
+            "if(l&&getComputedStyle(l).display!=='none'){document.getElementById('lClose').click();return 'closed';}" +
             "var c=document.getElementById('credits');" +
             "if(c&&getComputedStyle(c).display!=='none'){document.getElementById('cClose').click();return 'closed';}" +
             "var p=document.getElementById('pop');" +
             "if(p&&getComputedStyle(p).display!=='none'){document.getElementById('dots').click();return 'closed';}" +
+            "var o=document.getElementById('overlay');" +
+            "if(o&&getComputedStyle(o).display!=='none'){document.getElementById('tClose').click();return 'closed';}" +
             "return 'exit';}catch(e){return 'exit';}})()";
         web.evaluateJavascript(js, value -> {
             if (value == null || !value.contains("closed")) {
