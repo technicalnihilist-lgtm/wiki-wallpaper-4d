@@ -3,6 +3,68 @@
 Every change below keeps the UI, layout, wording and features exactly as they are.
 Only correctness, stability and speed change.
 
+## v5.3.6 — 2026-11-09
+**Arrow keys and the Android Back button no longer reach through an open sheet, and a language
+switch no longer wipes the message that explains an empty page**
+
+- **ArrowLeft / ArrowRight changed the wallpaper behind an open sheet.** The window's arrow
+  handler is the one document-level key listener that never got the guard Escape received in
+  v5.3.4 — it only asked `if(!isOpen)return`, so a sheet sitting on top of the window did not stop
+  the keys from reaching the wallpaper underneath. Measured in headless Chromium against the live
+  CDN: open **"Flower jtca001"** → **All credits** → press ArrowRight twice — before: the window
+  behind the sheet had moved on to **"Aceras anthropophora (detail)"**, so closing the sheet showed
+  a different wallpaper than the one the user opened; after: the title is still **"Flower jtca001"**
+  through the whole observation, and with no sheet open the same two presses still move it to
+  **"Wind Point Lighthouse 071104"**. The guard is now `!isOpen || credOpen || langOpen || popOpen`.
+  The **F** fullscreen shortcut was missing only the language sheet (`isOpen || popOpen || credOpen`),
+  and it was reachable: open the language sheet, click the sheet's heading so the search field loses
+  focus, press **F** — before: `document.fullscreenElement` became non-null, i.e. the app went
+  fullscreen behind the sheet; after: nothing happens. With nothing open **F** still enters
+  fullscreen exactly as before.
+- **Switching language on an empty result deleted the only explanation on the page.**
+  `applyLang()` re-renders every translated string, and it rebuilt the status pill with an *empty*
+  kind — `showStatus('')` — so the pill was cleared and nothing ever raised it again. Measured:
+  search **"zzzqqqxyz"** → **"😕 Nothing found — try another keyword or filter"** with 0 cards;
+  switch to **हिन्दी** — before: the pill is gone and the page is **0 cards with no message at
+  all**; after: **"😕 कुछ नहीं मिला — कोई दूसरा कीवर्ड या फ़िल्टर आज़माएं"** is still on screen, in
+  the new language. `showStatus()` now remembers the last kind and message, and `applyLang()`
+  re-renders *that* instead of an empty one. When no status is showing nothing changes — verified on
+  a populated view (the Art chip after the same language switch: status still empty, 59 cards).
+- **Android Back quit the app while the language sheet was open, and closed the wallpaper that was
+  open under the credits sheet.** `MainActivity.onBackPressed()` tests the wallpaper window first,
+  the credits sheet second, the settings popover third, and never tests the language sheet at all.
+  Measured by running the exact JS that `onBackPressed()` evaluates inside the page: language sheet
+  open → **`'exit'`** (the activity would be finished, with the sheet still on screen and `lock`
+  still on `<html>`); now **`'closed'`**, sheet hidden, `lock` off. Card open → **All credits** →
+  Back — before: `#overlay` went to `none` at **900 ms** and the `lock` class came off while the
+  credits sheet was still `flex`, i.e. the wallpaper the user was reading was thrown away and the
+  grid behind the sheet started scrolling; after: the sheet closes within **100 ms** and the window
+  stays open (`#overlay` `flex`, `lock` on) for the whole 2.5 s observation. Back is now the mirror
+  of Escape: sheets first, the window last.
+- **Nothing visual changed.** 2,751,905 → 2,752,030 bytes; every byte before the single `<script>`
+  block and after `</script>` is identical, and the script diff is **5 lines changed, 1 added**
+  (comments included). Computed style and geometry of 22 elements (header, title, search box, chip
+  row, the chip lens, meta line, cell, card, face, caption, title, credit line, more button, the
+  three header buttons, the 4D logo, backdrop, status line, toast) across 22 properties each: **0**
+  differences, measured with images blocked so paint order cannot vary. With images live the only
+  differences are the y of the status line and the more button, which sit below the grid and follow
+  how many cards that run happened to render. The top 190 px of the first screen differs by
+  **24,338** px against a **39,947** px same-build run-to-run noise floor. Real-CDN run at
+  1280×900: **0** HTTP 429, **0** failed requests (**69/69** thumbnails 200), **0** console errors,
+  **0** unhandled rejections; boot FCP **1,200 ms**, dcl **1,375 ms**, **240** cards, **69** images
+  by 14 s; 12-step scroll **420** cards, **143** images, **21** long tasks (3.43 s, max 586 ms) —
+  unchanged from v5.3.5's 456 / 151 / 23 (2.95 s, max 494 ms), which is layout-bound, not
+  script-bound.
+- Checked and found already fine, so not touched: **the embedded data** — 6,288 entries, **0**
+  duplicate ids and **0** duplicate titles, and all **3,424** entries that store no Commons page URL
+  rebuild a valid one from the thumbnail path (percent-encoded names included). **The thumbnail
+  loader** — 6 slots / 45 ms gap, **69/69** 200s and **0** 429s across a boot and a 12-step scroll.
+  **The settings popover after tapping "Language"** — `#pop` can stay `display:block` for a moment
+  behind the language sheet, but the sheet's dim layer is above it (hit-testing the popover's centre
+  returns `ldim`) and it hides itself, so nothing is visible and it was left alone. **The About line
+  in the settings popover** still reads "2,322 · Wikimedia Commons" while the file embeds 6,288
+  wallpapers — that is user-visible wording, so it is left exactly as it is.
+
 ## v5.3.5 — 2026-11-08
 **A reconnected phone fills the gallery in 8 s instead of 18 s, dead cards come back, and the
 Favourite button stops lying about what it saved**
