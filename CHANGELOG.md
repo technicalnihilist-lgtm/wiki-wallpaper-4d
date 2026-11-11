@@ -3,6 +3,227 @@
 Every change below keeps the UI, layout, wording and features exactly as they are.
 Only correctness, stability and speed change.
 
+## v5.3.9 — 2026-11-12
+**Tapping the 🆕 Naye chip a second time emptied the feed, a language switch threw away the tab you
+were reading, and a search lost its "no chip selected" state on the same switch**
+
+- **Tapping the active 🆕 Naye chip wiped the gallery.** `start()` begins a new view and resets
+  `seen` (the id set) but never reset `seenT`, the "titles already in this view" set that every
+  feed filters against. `loadFreshPage()` drops any item whose title is already in `seenT`, so on
+  the second entry into the newest-uploads feed all forty titles were still in it from the first
+  load and nothing was added. Measured in headless Chromium against the live CDN: boot → **🆕
+  Naye** = **40** cards; tap it again = **1** card, still labelled "newest uploads"; **All** →
+  **🆕 Naye** = **0** cards with **"✨ That's all! Try another category or search"**. After the fix:
+  **40 → 40 → 40** on the same three taps, and the same path from the **Wikimedia** source chip
+  (which re-enters the feed through `start('#fresh')`) comes back with 40 cards instead of 1.
+  `start()` now clears `seenT` with `seen`; `offered` / `offeredT`, the session-wide "already
+  announced as new" set that the ✨ pill relies on, are untouched, so nothing is announced twice.
+- **A language switch threw away the tab you were reading.** `applyLang()` re-renders the open
+  wallpaper through `fillModal()`, which always ends on the Info tab, and the `showTab(tab)` that
+  followed could never put anything back — `tab` had already been overwritten by `fillModal()` by
+  the time it ran. Measured: open **"Flower jtca001"** → **Credit** tab → switch to **हिन्दी** —
+  before: the window is on **Info** (`p-info` shown, `p-credit` hidden) with the credit text only
+  reachable by tapping Credit again; after: still on **Credit**, now in Hindi. The tab is captured
+  before the re-render and restored after it; opening a wallpaper from the grid still lands on Info
+  exactly as before.
+- **The fullscreen credit bar kept the old language.** It is built by `updateFsCredit()`, which
+  `fillModal()` does not call, so its two buttons stayed in the previous language while the rest of
+  the page switched. Measured: open a wallpaper → **⛶ Fullscreen** → switch to **ગુજરાતી** — before:
+  **"◻ Fill" / "⤡ Exit"** in English under a Gujarati window; after: **"◻ ભરો" / "⤡ બહાર નીકળો"**.
+  `applyLang()` now rebuilds the bar when fullscreen is on (same two strings, right language).
+- **A search lost its empty chip row on a language switch.** `submit()` clears every chip on a
+  typed search and that empty row is the correct state, but `renderChips()` rebuilds the row from
+  state and re-invented a selection whenever it found none, so the switch lit **All** and slid the
+  lens under it above a grid still showing search results. Measured: search **"ansel adams"** →
+  chips on **[]**, lens opacity **0**; switch language — before: **["All"]**, lens **1**; after:
+  **[]**, **0**, i.e. exactly the state `submit()` left (a run without the language switch gives
+  **[]** / **0** in both builds). The row is now rebuilt from what was actually lit: only the very
+  first build falls back to the current view, and a rebuild with nothing lit stays unlit. Category
+  and source chips are covered, so **Animal** after a search is still the only lit chip.
+- **Nothing visual changed.** The 2,548,730 bytes of HTML+CSS and embedded wallpaper data that
+  precede the single `<script>` block, and the 26 bytes after `</script>`, are **byte-identical**
+  to v5.3.8; the script diff is **5 lines changed, 25 added** (comments included). Computed style
+  and geometry of **108** element/state pairs (header, title, search box, chip row, the chip lens,
+  meta line, cell, card, face, caption, title, credit line, more button, the three header buttons,
+  the 4D logo, backdrop, status line, toast, pull indicator, window, title bar, tabs, tab lens,
+  photo, both download buttons, fullscreen button, arrows, credit bar, popover, language sheet,
+  credits sheet and its rows) across **42** properties each: **0** differences; the only 6 entries
+  that differ are `html` / `body` / `#grid` / `#status` / `#moreBtn` / `#sentinel`, and they differ
+  by exactly the same 6 in a same-build pair (how many cards that run happened to render).
+  Real-CDN run at 1280×900: **0** HTTP 429, **0** failed requests, **0** console errors, **0**
+  unhandled rejections; boot FCP **1,988 ms**, dcl **1,287 ms**, **420** cards, **39** thumbnails,
+  **0** failed faces, **9** long tasks (1.04 s); 12-step scroll **690** cards, **135** images, **0**
+  failed faces, **20** long tasks (4.05 s, max 617 ms), which is layout-bound as before. ⬇ Original
+  on an open card still fetches `200` from `upload.wikimedia.org`; at 390×844 a pull-to-refresh
+  still goes `pull on` → `pull on spin` → **"✨ 40 new wallpapers added"** with 0 errors.
+- Checked and found already fine, so not touched: **the keyboard path** — Escape closes the credits
+  sheet first and the window second (`overlay` `flex` → `none`, `lock` off), ArrowRight moves the
+  open window on to the next wallpaper, favourites still flip `♡ Favourite` → `♥ Saved` with
+  `ww_favs` 0 → 1, and the language sheet's own pull guard still swallows nothing. **The image
+  loader** — 3.4–23 ms of `pumpImgs()` per boot and 20–31 ms across a 12-step scroll (measured with
+  an instrumented copy of the file), **0** failed faces and **0** 429s. **Number formatting** —
+  `toLocaleString('en-IN')` runs 11–19 times per boot for **0.8–2.1 ms** in total; a hand-rolled
+  Indian-grouping helper was written, verified to produce identical text for 0..40,000 and for
+  1,00,000 / 1,23,456 / 12,34,567, and then **reverted**: it saves under 2 ms, so there was no
+  measurable win to claim (one 98 ms reading in a cold container was a first-launch artefact — the
+  same call measured 0.1 ms on every later run). **The 17.7 s freeze on "📋 Copy all credits"** is
+  still there: it copies 6,288 credits (~1.5 MB) and `execCommand('copy')` is the cost, so fixing it
+  means copying fewer lines, which is a feature change. **The multi-source feeds** (Openverse,
+  Flickr, NASA, …) could not be exercised here — those hosts are not reachable from this sandbox —
+  so their code was read but not measured.
+- **The repository copy of `index.html` was still the v5.3.6 file** (v5.3.7 and v5.3.8 shipped only
+  as release assets, because `git push` is denied for this connection and the Git Data API refuses
+  blobs). This session's write path is the same: the only route into the repository carries the file
+  inline in the tool call, which cannot carry 2.7 MB, so `android/AndroidManifest.xml`
+  (versionCode **30** / versionName **5.3.9**) and this changelog were updated normally and the
+  fixed `index.html` is attached to the **v5.3.9** release (the `index.html` there is the file inside
+  the APK). Copying the release's `index.html` over the repository copy is still the one remaining
+  step, for v5.3.7, v5.3.8 and v5.3.9 alike.
+
+## v5.3.8 — 2026-11-11
+**Every control in fullscreen photo mode works again, and the "newest uploads" view can actually
+refresh**
+
+- **The fullscreen photo view was drawn with five controls that did nothing when tapped.** `#overlay`
+  carries `pointer-events:none` on purpose — a click outside the window has to reach the dim layer
+  behind it, which is what closes the window — and `.win` turns pointer events back on for its own
+  contents. The two side arrows (`#fsPrev`, `#fsNext`) and the credit bar (`#fsCredit`: its
+  **Fill/Fit** button, its **Exit** button and its **Commons ↗** link) are children of `#overlay`,
+  not of `.win`, so they inherited the switch-off. They were painted on top of the photo and were
+  simply transparent to the mouse and the finger. Measured in headless Chromium against the live
+  CDN, open **"Wind Point Lighthouse 071104"** → **⛶ Fullscreen**: `getComputedStyle` reported
+  `pointer-events: none` for all five, `document.elementFromPoint` at the centre of each returned
+  `IMG#pimg`, and real clicks changed nothing — the title stayed **"Wind Point Lighthouse 071104"**
+  after **›** and after **‹**, `object-fit` stayed **contain** after **Fill**, no tab opened from
+  **Commons ↗**, and `#overlay` was still `overlay fs` after **Exit**. The keyboard path
+  (ArrowLeft/ArrowRight) worked, which is why this stayed invisible. Now those five carry
+  `pointer-events:auto`: **›** gives **"Aceras anthropophora (detail)"** and **‹** returns to
+  **"Wind Point Lighthouse 071104"**, **Fill** flips `object-fit` to **cover** and the label to
+  **"◱ Fit"** (and back to **contain / "◻ Fill"**), **Commons ↗** opens
+  `https://commons.wikimedia.org/wiki/File:Wind_Point_Lighthouse_071104.jpg`, and **Exit** leaves
+  fullscreen (`overlay fs` → `overlay`, window still open). Nothing else about the layer changed:
+  the bar's background is still click-through, so tapping or dragging it still reaches the photo.
+- **Pull-to-refresh on the "🆕 Naye" view always answered "Already up to date" and never added a
+  wallpaper.** `refreshFeed()` filters what the Commons API returned through `inPool()`, which is
+  the *search term* filter — and `#fresh` is a mode, not a term, so it looked for the literal string
+  `"#fresh"` inside every title and description and rejected the whole page. Measured with the
+  Commons API answered by a stub that adds one genuinely new upload (**"Newone.jpg"**) between the
+  two fetches: before, the view held **3** cards before and **3** after the refresh, with the toast
+  **"✅ Already up to date"**; after, **3 → 4** cards, toast **"✨ 1 new wallpapers added"**, and the
+  new wallpaper is the first card. The same flow against the live CDN went **40 → 42** cards instead
+  of staying at 40. The filter still applies where it belongs: on the **cars** chip the same mocked
+  refresh stays at **116 → 116** with "Already up to date", and the plain gallery view is unchanged.
+- **Nothing visual changed.** The 67,244 bytes of HTML+CSS before the single `<script>` block are
+  identical apart from three CSS rules that gain `pointer-events:auto` and one 4-line comment, and
+  the script diff is **1 expression changed, 3 comment lines added**; the 26 bytes after `</script>`
+  are byte-identical. 2,753,105 → 2,753,796 bytes (+691). Proof that nothing moved or recoloured: with the
+  live API and all images blocked (so the grid cannot vary between runs) and animations frozen, a
+  screenshot of the whole 1280×900 screen differs by **0 px of 1,152,000** and the open window by
+  **0 px**, against a same-build run-to-run noise floor of **0 px**; the fullscreen view is **0 px**
+  different too. Computed style and geometry of **40** elements (header, title, search box, chip row,
+  the chip lens, meta line, cell, card, face, caption, title, credit line, more button, the three
+  header buttons, the 4D logo, status line, toast, pull indicator, window, title bar, tabs, tab lens,
+  photo, download buttons, fullscreen button, both arrows, the credit bar and its buttons, the new
+  pill, the popover, the language sheet and the credits sheet) across **35** properties each: **0**
+  differences, except the four `pointer-events` values that are the fix.
+- Real-CDN run at 1280×900: **0** HTTP 429, **0** failed requests, **0** console errors, **0**
+  unhandled rejections; boot FCP **832 ms**, **20** long tasks (2.04 s, max 614 ms), **168** cards,
+  **68** thumbnails, every one **200** (69 responses in all, the document included), **0** failed
+  faces; 12-step scroll **600** cards, **236** images, **62**
+  long tasks (9.53 s, max 794 ms) against v5.3.7's 22 (2.37 s) / 57 (9.3 s) — the same within this
+  machine's noise. Profiled again with CDP to be sure no script win was left on the table: over
+  those 12 scroll steps the page spent **0.53 s** in script, **3.61 s** in layout and **0.84 s** in
+  style, i.e. the jank is layout and raster of the glass cards, not JavaScript.
+- Checked and found already fine, so not touched: **"📋 Copy all credits"** blocks the main thread
+  for **17.7 s** (the toast lands **19.6 s** after the tap) because it copies all 6,288 credits —
+  about **1.5 MB** — and `document.execCommand('copy')` on a payload that size costs **11.6 s per
+  MB** here on its own. Filling the hidden textarea *after* focusing it (in isolation that turned a
+  15.9 s `focus()` into 0.1 s) was tried and **reverted**: in the real button path the freeze went
+  **17.7 → 17.9 s**, so the copy itself is the cost and the only real fix would be copying fewer
+  lines, which is a feature change. **The rest of the app after the two edits** — Escape, ArrowLeft/
+  ArrowRight and **F** guards, the Android Back JS (unchanged), open/close/maximise of the window,
+  favourites add/remove/refresh, credits copy / .txt download / load-more, mobile pull-to-refresh at
+  390×844, a language switch in the middle of a search, and 10 rapid category switches followed by a
+  30 s offline/online cycle: **0** failed faces after reconnect, **0** stuck `lock` classes, **0**
+  429s. **The repository copy of `index.html`** was still the v5.3.6 file, because v5.3.7 shipped
+  only as a release asset. This session's write path is the same one v5.3.7 ran into: `git push` is
+  denied for the connection (**403**), the Git Data API refuses blobs (*Resource not accessible by
+  integration*), and the only route into the repository carries the file inline in the tool call,
+  which cannot carry 2.7 MB — so `android/AndroidManifest.xml` (versionCode 29 / versionName 5.3.8)
+  was updated normally, and the fixed `index.html` and this changelog are attached to the **v5.3.8**
+  release (the `index.html` there is the file inside the APK). Copying the release's `index.html`
+  over the repository copy is still the one remaining step, for v5.3.7 and v5.3.8 alike.
+
+## v5.3.7 — 2026-11-10
+**Every wallpaper's "Download Original" works again, and pulling down inside the language sheet
+no longer rebuilds the gallery behind it**
+
+- **"⬇ Original" saved nothing for all 6,288 embedded wallpapers, and "⬇ Download HD" / the
+  Android "Set wallpaper" failed for the 353 whose width is 1920 or less.** The embedded list
+  stores only each thumbnail's path, so `origOf()` rebuilds the original by dropping the `/thumb/`
+  part of it — but it kept the *thumbnail* host, producing
+  `thumb.wikimedia.org/wikipedia/commons/1/18/Bradypus.jpg`. That host answers a non-thumb path
+  with a **301 to `https://commons.wikimedia.org/`**, an HTML page on another origin, so the
+  download's `fetch()` never got an image. Measured in headless Chromium against the live CDN:
+  open **"Bradypus"** (1536 × 2048) → **⬇ Original** — before: one request to the thumb host,
+  **0** blobs created, toast *"Download was blocked. Open the image and long-press to save it."*
+  whose **Open ↗** link went to the Commons homepage; after: `200 image/jpeg` from
+  `upload.wikimedia.org`, blob **2,857,782 bytes**, toast *"✅ Downloaded — don't forget the
+  credit!"*. The same click on **⬇ Download HD** went from **0** blobs to the same
+  **2,857,782**-byte JPEG, and on **"Inside Balconies Cave at Pinnacles National Monument 1"**
+  (1257 × 1874) the window's photo went from the **500 × 745** thumbnail to the full
+  **1257 × 1874** original and its **⬇ Original** from **0** to **2,462,000** bytes. `origOf()`
+  now maps the thumbnail host to `upload.wikimedia.org`, which is where the same path really
+  lives (8 of 8 sampled entries `200 image/jpeg`; `access-control-allow-origin: *`, so the
+  download's CORS fetch succeeds). `bigUrl()` hands exactly this URL to the APK's
+  `Wallpaper.set()` bridge, so the 353 smaller originals no longer come back as
+  *"could not decode image"* — that is the same value measured above, not a separate run on a
+  device. For a 2500 × 1625 entry (whose HD download already used the 1920 px thumbnail) nothing
+  changed: `1920px-…jpg`, **479,670** bytes, before and after.
+- **Dragging down inside the open language sheet started a pull-to-refresh and threw away the
+  gallery behind it.** The `touchstart` guard tested `isOpen || popOpen || credOpen` and had never
+  been given `langOpen`, and the language list is taller than the sheet on a phone (measured
+  **770 px of rows in a 565 px box**), so the natural gesture of scrolling it back up landed in
+  the pull handler: every `touchmove` was `preventDefault`-ed — **8 of 8** — which stops the list
+  from scrolling at all, and releasing past the threshold ran `refreshFeed()`, rebuilding the grid
+  under the sheet and scrolling it to the top. Measured at 390 × 844 with touch emulation, a
+  160 px down-drag on `#llist`: before: **8/8** moves prevented, `#pull` became `pull on` with
+  *"Release to refresh!"*, and on release `#refresh` went busy and the grid went **70 → 50 → 30**
+  cards while the sheet was still open; after: **0/8** prevented, `#pull` never leaves `pull`,
+  no refresh, grid **50 → 50**. The credits sheet was already guarded and still is (**0/8**,
+  grid unchanged), and a pull on the gallery itself still works exactly as before (**8/8**
+  prevented, `pull on` → `pull on spin`, `#refresh` busy). `langOpen` is now in the guard, the
+  same list of sheets that Escape, the arrow keys and **F** already use.
+- **Nothing visual changed.** The 2,548,313 bytes of HTML+CSS that precede the single `<script>`
+  block are **byte-identical**, and the script diff is **2 statements changed, 15 lines added**
+  (comments included). The two edits touch no markup, no CSS, no string, no class and no
+  geometry: one is a host rewrite inside a URL builder, the other adds one identifier to an `if`.
+  Real-CDN run at 1280×900: **0** HTTP 429, **0** failed requests, **0** console errors, **0**
+  unhandled rejections; boot FCP **808 ms**, **168** cards, **60** thumbnails loaded, **0**
+  failed faces; 12-step scroll **155** cards, **112** images, **0** failed faces; credits sheet
+  **80** rows, **0** broken images, **0** 429s.
+- Checked and found already fine, so not touched: **`strip()`'s DOMParser** — the profiler blamed
+  **78 ms** of a live-feed batch on it, but a 200-call benchmark of the same HTML measured
+  **4 ms** in total, so the cost was the profiler attributing parse work, and an `innerHTML`
+  rewrite measured the same 4 ms: not shipped. **The `nearIO` observer** — it is never
+  disconnected, so I expected detached cards to pile up; `Memory.getDOMCounters` after 30 category
+  switches showed **4,127 → 3,208** live nodes (no growth) and `usedJSHeapSize` **7,188 → 7,357 KB**,
+  so nothing is retained and there was nothing to fix. **The 1,200 ms sentinel interval** — opening
+  the credits sheet at the bottom of the page left the card count at **294** for 16 s, because the
+  observer had already moved the sentinel out of range: no background filling to stop. **A 40-step
+  random UI fuzz** (chips, cards, Escape, arrows, credits, popover, language, refresh, Load more)
+  left no stuck `lock` class, no stuck pull spinner, no stuck busy ring and no disabled Load-more
+  button. **The i18n tables** — all 168 English keys exist, every `data-i18n` / `data-i18n-ph`
+  attribute in the markup and every `t('…')` call resolves; the keys the nine Indian languages and
+  the six others are missing fall back to English on purpose.
+- **Published as a release, not as a commit to `index.html`.** The GitHub write path this
+  maintenance session has can only carry a file inline in the tool call, and `git push` is denied
+  for the connection, so the 2.75 MB `index.html` and `android/assets/index.html` could not be
+  replaced in the repository; the fixed file is attached to the **v5.3.7** release (and is the one
+  inside the APK). `android/AndroidManifest.xml` (versionCode 28 / versionName 5.3.7) was updated
+  normally. Copying the release's `index.html` over the repository copy is the only remaining step
+  for v5.3.7.
+
 ## v5.3.6 — 2026-11-09
 **Arrow keys and the Android Back button no longer reach through an open sheet, and a language
 switch no longer wipes the message that explains an empty page**
