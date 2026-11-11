@@ -71,14 +71,16 @@ were reading, and a search lost its "no chip selected" state on the same switch*
   means copying fewer lines, which is a feature change. **The multi-source feeds** (Openverse,
   Flickr, NASA, …) could not be exercised here — those hosts are not reachable from this sandbox —
   so their code was read but not measured.
-- **The repository copy of `index.html` was still the v5.3.6 file** (v5.3.7 and v5.3.8 shipped only
-  as release assets, because `git push` is denied for this connection and the Git Data API refuses
-  blobs). This session's write path is the same: the only route into the repository carries the file
-  inline in the tool call, which cannot carry 2.7 MB, so `android/AndroidManifest.xml`
-  (versionCode **30** / versionName **5.3.9**) and this changelog were updated normally and the
-  fixed `index.html` is attached to the **v5.3.9** release (the `index.html` there is the file inside
-  the APK). Copying the release's `index.html` over the repository copy is still the one remaining
-  step, for v5.3.7, v5.3.8 and v5.3.9 alike.
+- **The repository copy of `index.html` is up to date again.** v5.3.7 and v5.3.8 shipped only as
+  release assets: `git push` is denied for this connection, the Git Data API refuses blobs, and the
+  one remaining route into the repository carried the file inline in the tool call, which cannot
+  carry 2.7 MB. The file does not have to go through the tool call at all — the maintenance program
+  reads it from disk and hands the bytes to that same API call — so `index.html`
+  (**2,755,634** bytes), `android/assets/index.html`, `android/AndroidManifest.xml` (versionCode
+  **30** / versionName **5.3.9**) and this changelog were all committed in this run, and
+  `main/index.html` now hashes to the exact file that is inside the APK (sha256
+  `06b93f9d…3743b4`). Because this build is made on top of the v5.3.8 file, the v5.3.7 and v5.3.8
+  fixes are in the repository for the first time as well.
 
 ## v5.3.8 — 2026-11-11
 **Every control in fullscreen photo mode works again, and the "newest uploads" view can actually
