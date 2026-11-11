@@ -299,7 +299,11 @@ footer .cbtn{flex:none;display:inline-block;padding:11px 20px;margin-bottom:8px}
 #overlay.fs .pface .glare{display:none}
 #overlay.fs .pbadge{display:none}
 #overlay.fs .fsnav{display:grid}
-.fsnav{display:none;position:absolute;top:50%;transform:translateY(-50%);z-index:7;width:48px;height:48px;place-items:center;
+/* #overlay is pointer-events:none so a click outside the window reaches the dim layer
+   behind it, and .win turns it back on for its own contents. The two arrows and the credit
+   bar below are children of #overlay, not of .win, so they inherited the switch-off too: they
+   were drawn on top of the photo but every click went to the image underneath. */
+.fsnav{display:none;position:absolute;top:50%;transform:translateY(-50%);z-index:7;pointer-events:auto;width:48px;height:48px;place-items:center;
   font-size:28px;line-height:1;color:#fff;background:rgba(255,255,255,.14);border-radius:50%;
   box-shadow:inset 0 0 0 .5px rgba(255,255,255,.35);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
   transition:transform .2s,background .2s;opacity:.9}
@@ -313,9 +317,9 @@ footer .cbtn{flex:none;display:inline-block;padding:11px 20px;margin-bottom:8px}
 #overlay.fs .fscredit{display:flex}
 .fscredit .fct{font-weight:800;font-size:12.5px;max-width:46vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fscredit .fca{opacity:.82}
-.fscredit a{color:#8fb1ff;font-weight:700}
+.fscredit a{color:#8fb1ff;font-weight:700;pointer-events:auto}
 .fsx{padding:9px 16px;border-radius:99px;font-weight:800;font-size:12px;color:#fff;
-  background:rgba(255,255,255,.18);box-shadow:inset 0 1px 0 rgba(255,255,255,.35)}
+  background:rgba(255,255,255,.18);box-shadow:inset 0 1px 0 rgba(255,255,255,.35);pointer-events:auto}
 .fscredit .fsx:last-child{margin-left:auto}
 #full{display:none}
 @media(min-width:700px){#full{display:grid}}
@@ -685,7 +689,17 @@ async function enableGyro(on){
 const WALLS=JSON.parse(document.getElementById('__walls').textContent);
 const API='https://commons.wikimedia.org/w/api.php';
 
-const origOf=u=>(u||'').split('?')[0].replace('/thumb/','/').replace(/\/[^/]+$/,'');
+/* The original file is served by upload.wikimedia.org, not by the thumbnail host: a thumb path
+   with the /thumb/ part taken out (…/commons/1/18/Bradypus.jpg) is answered by
+   thumb.wikimedia.org with a 301 to https://commons.wikimedia.org/ — an HTML page on another
+   origin. Every embedded wallpaper keeps only its thumbnail path, so its `original` was that
+   dead URL: "Download Original" failed its CORS fetch for all of them (and, for the 353 whose
+   width is 1920 or less, so did "Download HD" and the Android "Set wallpaper", which reported
+   an undecodable image). Same path, correct host. */
+const origOf=u=>{
+  const s=(u||'').split('?')[0].replace('/thumb/','/').replace(/\/[^/]+$/,'');
+  return s.replace(/^https:\/\/thumb\.wikimedia\.org\//,'https://upload.wikimedia.org/');
+};
 /* The embedded list is stored compactly: the thumbnail keeps only its path (the host is added
    back here) and the Commons page URL is rebuilt from it, which saves ~350 KB in the file. */
 const THUMB_HOST='https://thumb.wikimedia.org';
@@ -1136,7 +1150,12 @@ function start(t,exactCat){
      and the meta line read «"#fresh"» */
   if(feedMode!=='wiki'&&term==='#fresh')term='';
   token++;if(ctrl)ctrl.abort();ctrl=new AbortController();
-  pos=0;liveOffset=0;liveDone=false;loading=false;seen=new Set();revealN=0;pool=[];
+  /* seenT must be reset with seen: it is the "already in this view" title set, and every feed
+     filters against it. Leaving it across views made re-entering the 🆕 Naye feed add nothing —
+     all forty titles were still in it from the first load — so tapping the chip a second time
+     emptied the gallery (40 → 1 card, and 0 with "That's all!" after a trip to All and back).
+     `offered` / `offeredT` are the session-wide "already announced as new" set and are untouched. */
+  pos=0;liveOffset=0;liveDone=false;loading=false;seen=new Set();seenT=new Set();revealN=0;pool=[];
   freshCont=null;pendingFresh=[];moreSig='';if(typeof hideNewPill==='function')hideNewPill();
   if(io)io.disconnect();
   clearGrid();actCard=null;
@@ -1651,7 +1670,13 @@ function applyLang(){
   buildChips();
   buildPop();
   statusSig='';metaSig='';showStatus(statusKind,statusMsg);updateMoreBtn();updateMeta();
-  if(curData&&isOpen)fillModal(curData);
+  /* fillModal() re-renders the whole window and always lands on the Info tab, so the
+     showTab(tab) below could never restore anything: `tab` had already been overwritten by
+     fillModal() by the time it ran. A language switch while the user was reading the Credit tab
+     threw that tab away. The tab is captured before the re-render and put back after it. The
+     fullscreen credit bar is not part of fillModal() either, so its Fill / Exit buttons kept the
+     previous language's labels; it is rebuilt here when fullscreen is on. */
+  if(curData&&isOpen){const tb=tab;fillModal(curData);showTab(tb,true);if(fsMode)updateFsCredit()}
   if(credOpen){$('clist').replaceChildren();credShown=0;renderCredits(80)}
   $('ptext').textContent=t('pull_hint');
   if(isOpen)showTab(tab,true);
@@ -1701,8 +1726,17 @@ function chipLabel(c){
 /* one single row: every category first, then the image sources behind a thin divider */
 function renderChips(){
   const box=chipsBox;
+  /* A rebuild must reproduce the row exactly as it is now. The row is built from state, and the
+     fallbacks below re-invent a selection whenever they find none: submit() clears every chip on
+     a typed search, so a language switch in the middle of a search lit "All" (and slid the lens
+     under it) above a grid that was still showing the search results. Only the very first build
+     (an empty row) has to fall back to the current view; after that, "nothing is selected" is a
+     state worth keeping. */
+  const rebuilt=box.childElementCount>0;
   const prevCat=(box.querySelector(':scope > button[data-cat].on')||{}).dataset;
-  const activeCat=(prevCat&&prevCat.cat)||(feedMode==='wiki'?'All':(mcat||'All'));
+  const prevSrc=(box.querySelector(':scope > button[data-src].on')||{}).dataset;
+  const activeCat=(prevCat&&prevCat.cat)||(rebuilt?null:(feedMode!=='wiki'?(mcat||'All'):(mode==='fresh'?'🆕 Naye':'All')));
+  const srcLit=id=>rebuilt?(!!prevSrc&&prevSrc.src===id):(id===feedMode);
   box.replaceChildren();
   box.append(el('i',{class:'lens'}));
 
@@ -1710,7 +1744,7 @@ function renderChips(){
     ? CATS
     : ['All'].concat(CATS15.map(c=>c[0]));
   cats.forEach(c=>{
-    const on=(c===activeCat)||(c==='All'&&!activeCat);
+    const on=(c===activeCat);
     const b=el('button',{type:'button','data-cat':c,class:on?'on':'',on:{click:e=>{
       const btn=e.currentTarget;
       box.querySelectorAll(':scope > button[data-cat]').forEach(x=>x.classList.toggle('on',x===btn));
@@ -1727,7 +1761,7 @@ function renderChips(){
   const entries=[['wiki','Wikimedia'],['all','All sources ('+usable.length+')'],['fav','♥ Favourites']]
     .concat(usable.map(d=>[d.id,d.name]));
   entries.forEach(([id,label])=>{
-    const b=el('button',{type:'button','data-src':id,class:'sr'+(id===feedMode?' on':''),
+    const b=el('button',{type:'button','data-src':id,class:'sr'+(srcLit(id)?' on':''),
       on:{click:e=>{
         const btn=e.currentTarget;
         box.querySelectorAll(':scope > button[data-src]').forEach(x=>x.classList.toggle('on',x===btn));
@@ -2343,7 +2377,10 @@ async function refreshFeed(){
     const items=await fetchFresh(40,true);
     if(my!==token)return;
     cacheFresh(items);
-    const add=items.filter(d=>!isOffered(d)&&!seen.has(d.id)&&!seenT.has(tkey(d.title))&&inPool(d));
+    /* '#fresh' is a mode, not a search term: inPool() would look for the literal string
+       "#fresh" in every title, so on the "newest uploads" view every genuinely new upload was
+       dropped and the refresh always answered "Already up to date". */
+    const add=items.filter(d=>!isOffered(d)&&!seen.has(d.id)&&!seenT.has(tkey(d.title))&&(mode==='fresh'||inPool(d)));
     add.forEach(d=>{d.fresh=true;seen.add(d.id);markOffered(d)});
     if(add.length){
       pool.unshift(...add);pos=0;clearGrid();
@@ -2404,7 +2441,11 @@ refreshBtn.addEventListener('click',()=>refreshFeed());
 /* ---- pull to refresh ---- */
 let pullY=0,pulling=false,pullStart=0;
 addEventListener('touchstart',e=>{
-  if(scrollY>2||e.touches.length!==1||refreshing||isOpen||popOpen||credOpen)return;
+  /* the language sheet was missing from this guard: dragging down inside it (its list is
+     scrollable on a phone) started a pull-to-refresh, so every touchmove was preventDefault-ed
+     — the list could not be scrolled back up — and releasing rebuilt the grid behind the sheet.
+     Same list of sheets as Escape, the arrow keys and F. */
+  if(scrollY>2||e.touches.length!==1||refreshing||isOpen||popOpen||credOpen||langOpen)return;
   pullStart=e.touches[0].clientY;pulling=true;pullY=0;
   const hb=$('hwrap').getBoundingClientRect().bottom;
   pullEl.style.top=Math.round(Math.max(10,hb+10))+'px';
