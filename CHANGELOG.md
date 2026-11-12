@@ -3,6 +3,63 @@
 Every change below keeps the UI, layout, wording and features exactly as they are.
 Only correctness, stability and speed change.
 
+## v5.4.0 — 2026-11-13
+**A refreshed wallpaper came back twice in the newest-uploads feed, and the Android "set wallpaper"
+button stayed greyed out after it had worked**
+
+- **Refreshing the 🆕 Naye view and then loading the next page showed the same wallpaper twice.**
+  `refreshFeed()` adds what it found to `seen` (the id set) and to `offered` / `offeredT` (the
+  session-wide "already announced as new" pair), but never to `seenT` — the "titles already in this
+  view" set that every feed filters against. `loadFreshPage()` (and `loadLive()`) therefore still
+  counted the refreshed wallpaper as unseen, and the next page of the feed handed back that same
+  file again: the gallery showed it once with its **NEW** tag and once without. `applyFresh()`, the
+  ✨ pill, had the same gap, so a polled wallpaper could come back the same way.
+  Measured in headless Chromium against the live CDN, with the first `list=allimages` answer
+  rewritten to hide its newest pick — so it arrives exactly like a genuinely new upload between the
+  two loads: **🆕 Naye** → 40 cards, **Refresh** → "✨ 1 new wallpapers added" → 41 cards, then three
+  taps on **more**: before **43 cards with 1 duplicate title** ("Asmolova park", reproduced in two
+  separate runs), after **42 cards, 0 duplicates** (second run: refresh added 2 → 42 cards, still
+  **0**). Both lines now add `seenT.add(tkey(d.title))`; the ordering of `seen` / `offered` /
+  `offeredT` is untouched, so nothing is announced as new twice.
+- **The wallpaper-set buttons stayed disabled after the wallpaper had been set.** In the Android app
+  the bridge answers `"started"` at once and reports the real result later through
+  `window.__wallResult`. `setW()` disabled the tapped button, saw `"started"` and returned before
+  re-enabling it, and `__wallResult` only showed a toast — so the button the user had just pressed
+  stayed greyed out for the rest of the window's life, underneath a "✅ Wallpaper set" toast.
+  Measured with a stand-in bridge that behaves exactly like `MainActivity.WallpaperBridge`: after the
+  click the button is `disabled=true` in both builds; after `__wallResult('ok')` — before
+  **`disabled=true`** (still stuck), after **`disabled=false`**. The buttons waiting for that result
+  are now kept in `wallWait` and released when it arrives; the synchronous path (`ok` / `error: …`)
+  behaves exactly as before.
+- **Nothing visual changed.** The 67,661 bytes of HTML+CSS before the wallpaper data, the
+  2,485,737-byte embedded data block and the 26 bytes after the last `</script>` are
+  **byte-identical** to v5.3.9; the script diff is **4 statements changed, 14 lines added** (8 of
+  them comments, 1 a `let wallWait=[]` declaration). Real-CDN run at 1280×900: **0** HTTP 429,
+  **0** failed requests, **0** console errors, **0** unhandled rejections; boot FCP **900 ms**, dcl
+  **1,507 ms**, **168** cards, **71** thumbnails, **0** failed faces, **21** long tasks (2.63 s);
+  12-step scroll **600** cards, **292** images, **0** failed faces, **45** long tasks (8.36 s) —
+  against **582** cards, **257** images and **49** long tasks (10.65 s) for v5.3.9 on the same
+  harness, which is live-CDN variance rather than this change.
+- Checked and found already fine, so not touched: **the 40-category-switch memory question** — after
+  forty switches and a forced GC the heap is **7.0 MB** against **7.5 MB** at boot, so `nearIO` does
+  not retain the cells of cleared grids (Chromium keeps observer targets weak); nothing to fix
+  there. **Escape ordering** — the credits sheet, then the language sheet, then the settings
+  popover, then the window, each closing alone (credits over the window: sheet `none`, overlay still
+  `flex`, same wallpaper). **The fullscreen photo controls** — Fill → Fit flips `object-fit`
+  contain → cover and back, › / ‹ move to the next / previous wallpaper, Exit leaves fullscreen with
+  the window still open, and all five controls report `pointer-events:auto`. **The settings
+  popover** — all 23 switches, the five segmented controls and both themes round-trip (light
+  `rgb(232,236,244)` ↔ dark `rgb(11,13,18)`). **Favourites** — saving from the Credit tab writes
+  `ww_favs` and the ♥ view shows it. **The credits sheet** — 80 rows on open, "ansel" filters to 2
+  rows and the header count follows. **The source round trip** — Wikimedia → All sources (2 usable
+  here) → back to Wikimedia rebuilds the grid. **390×844** — three columns, chip row scrolls, no
+  horizontal overflow. **Offline → online** — the meta line flips ○ Offline → ● Live and the loader
+  picks up again. **i18n** — every one of the 95 `t('…')` keys used in the script and all 17
+  `data-i18n` attributes exist in `en`; no duplicate element ids in the markup. **The scroll
+  profile** — of 26.6 s of sampled CPU time over a 12-step scroll, **0.75 s** is JavaScript and
+  **16.2 s** is layout/paint of the 690-card grid, so there is no JS micro-optimisation left worth
+  claiming.
+
 ## v5.3.9 — 2026-11-12
 **Tapping the 🆕 Naye chip a second time emptied the feed, a language switch threw away the tab you
 were reading, and a search lost its "no chip selected" state on the same switch**
