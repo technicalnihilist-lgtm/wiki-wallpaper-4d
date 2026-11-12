@@ -1796,6 +1796,11 @@ addEventListener('scroll',()=>{
 /* ================= window (macOS style) ================= */
 const win=$('win'),overlay=$('overlay'),dim=$('dim'),pw=$('pwrap'),pimg=$('pimg'),photo=$('photo');
 let isOpen=false,opening=false,closing=false,curData=null,curCell=null,hiddenCell=null;
+/* Buttons in the window's Use tab that are waiting for the Android bridge's asynchronous result
+   (the bridge answers "started" at once and calls window.__wallResult when the wallpaper is
+   actually set). They are re-enabled there; nothing else ever did, so the button stayed disabled
+   for the rest of the window's life even after a successful set. */
+let wallWait=[];
 
 let photoBox=null;
 addEventListener('resize',()=>{photoBox=null},{passive:true});
@@ -1850,7 +1855,7 @@ function fillModal(d){
       try{
         const url=await bigUrl(d,1920);
         const r=String(await Promise.resolve(window.Wallpaper.set(url,which))||'');
-        if(r.indexOf('started')===0)return;      /* final result arrives through __wallResult */
+        if(r.indexOf('started')===0){if(btn)wallWait.push(btn);return}      /* final result arrives through __wallResult */
         toast(/^ok/i.test(r)?'✅ Wallpaper set':'⚠️ '+(r||'Could not set wallpaper'));
       }catch(e){toast('⚠️ Could not set wallpaper')}
       if(btn)btn.disabled=false;
@@ -2381,7 +2386,11 @@ async function refreshFeed(){
        "#fresh" in every title, so on the "newest uploads" view every genuinely new upload was
        dropped and the refresh always answered "Already up to date". */
     const add=items.filter(d=>!isOffered(d)&&!seen.has(d.id)&&!seenT.has(tkey(d.title))&&(mode==='fresh'||inPool(d)));
-    add.forEach(d=>{d.fresh=true;seen.add(d.id);markOffered(d)});
+    /* The title has to join seenT as well: seenT is what every feed filters against, so a wallpaper
+       added by a refresh stayed "not in this view" to loadFreshPage(), and the next page of the
+       feed returned that same file again - the refreshed card appeared twice, once with its NEW
+       tag and once without. */
+    add.forEach(d=>{d.fresh=true;seen.add(d.id);markOffered(d);seenT.add(tkey(d.title))});
     if(add.length){
       pool.unshift(...add);pos=0;clearGrid();
       renderChunk(Math.min(pool.length,Math.max(30,add.length+10)));
@@ -2410,7 +2419,7 @@ function hideNewPill(){newPill.hidden=true}
 function applyFresh(){
   const add=pendingFresh.slice();pendingFresh=[];hideNewPill();
   if(!add.length)return;
-  add.forEach(d=>{d.fresh=true;seen.add(d.id);markOffered(d)});
+  add.forEach(d=>{d.fresh=true;seen.add(d.id);markOffered(d);seenT.add(tkey(d.title))});
   pool.unshift(...add);pos=0;clearGrid();renderChunk(30);
   scrollTo({top:0,behavior:'smooth'});
   toast(t('t_fresh',{n:add.length}));
@@ -2605,7 +2614,8 @@ if(lw){
 
 /* ================= boot ================= */
 if(S.gyro){if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function')S.gyro=false;else enableGyro(true)}
-window.__wallResult=m=>{try{toast(/^ok/i.test(String(m))?'✅ Wallpaper set':'⚠️ '+(m||'Could not set wallpaper'))}catch(e){}};
+window.__wallResult=m=>{try{toast(/^ok/i.test(String(m))?'✅ Wallpaper set':'⚠️ '+(m||'Could not set wallpaper'))}catch(e){}
+  for(const b of wallWait){try{b.disabled=false}catch(e){}}wallWait=[];};
 apply();buildPop();buildSrcChips();
 moveLens(chipsBox,true);
 if(document.fonts&&document.fonts.ready)document.fonts.ready.then(()=>moveLens(chipsBox,true));
