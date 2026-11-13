@@ -3,6 +3,62 @@
 Every change below keeps the UI, layout, wording and features exactly as they are.
 Only correctness, stability and speed change.
 
+## v5.4.1 — 2026-11-14
+**A connection that stalled instead of failing froze the app: the pull indicator, the refresh ring and
+every later Refresh press stayed dead for ever**
+
+- **One hung Wikimedia request wedged the whole refresh path, permanently.** `api()` had no deadline
+  of its own — its only `AbortController` is the caller's `ctrl`, and that is aborted when the *view*
+  changes, never when the network goes quiet. A connection that stalls after the TCP handshake (a
+  phone that walked out of Wi-Fi range, a captive portal that accepts and then says nothing) leaves
+  the `fetch()` promise pending indefinitely, so `refreshing` / `loading` are never cleared: the pull
+  indicator sits on screen reading **"Fetching the latest wallpapers…"**, the header's Refresh button
+  keeps its busy ring, and every further Refresh press returns at once because `refreshing` is still
+  true. Switching category does not clear it either — the spinner stays over the new grid.
+  Measured in headless Chromium through a local CONNECT proxy against the live CDN, with the proxy
+  rewritten to accept connections to `commons.wikimedia.org` and never answer them: **boot → Refresh
+  → sampled at 6.2 s / 12.3 s / 22.4 s / 32.6 s / 42.7 s / 60.9 s — `pull on`, `spin`, `busy` all
+  true at every sample, no toast, no status** (a longer run held the same state past **120 s**); a
+  second Refresh press changed nothing. After the fix the same stall clears at **20.7 s** and
+  **22.6 s** in two runs (`pull`/`spin`/`busy` all false, the "already up to date" toast shown, the
+  grid usable, and the next Refresh after the network returns does a real fetch again).
+  Each attempt in `api()` now carries its own `AbortController` plus a 20 s deadline; the caller's
+  abort is still relayed to it at once, so changing the view cancels exactly as before. A deadline
+  hit is reported as `err.rateLimited` — the existing "temporary failure" path — so `loadLive()`
+  clears the status pill **without** setting `liveDone` (a timeout must not end the feed) and sets a
+  15 s cooldown instead of hammering a dead socket. The deadline covers the body too, because
+  `fetch()` resolves at the headers and the JSON is read afterwards.
+- **Nothing visual changed.** The 2,548,730 bytes of HTML+CSS and embedded wallpaper data that precede
+  the single `<script>` block, and the 26 bytes after `</script>`, are **byte-identical** to v5.4.0;
+  the script diff is **27 lines changed, 26 added** (10 of them the comment explaining the deadline)
+  and **1 removed** (the old bare `fetch(u,{signal})`). The whole normal-path suite was re-run on the
+  built file and behaves exactly as v5.4.0: open a card → Credit tab → ♡ Favourite → ⛶ Fullscreen →
+  Fill → › next → Exit → close, the settings popover (anim → Off), the credits sheet (80 rows,
+  "ansel" → 2 rows), the language sheet (हिन्दी → ♥ Favourites shows the saved card → All → English),
+  **0** console errors, **0** unhandled rejections, **0** HTTP 429. Boot and scroll on the same
+  harness: boot **276–312** cards, FCP **1.9–2.1 s**, **0** failed faces; 12-step scroll **402** cards,
+  **176** images, **0** failed faces, **66** long tasks (8.9 s) against **62** (9.6 s) for v5.4.0 on
+  the same harness — i.e. unchanged, live-CDN variance. ⬇ Original still writes a **1,568,881**-byte
+  JPEG and ⬇ HD a **412,416**-byte one from the live CDN, and 40 open/close cycles leave the heap flat
+  at **12.1 MB** with **950** DOM nodes.
+- Checked and found already fine, so not touched: **image recovery after a network blip** — with the
+  thumbnail CDN blocked for 40 s and the page scrolled through 366 cards, only **2** cards reached the
+  terminal `.failed` state; the rest stayed queued and the loader drained the whole 184-item queue on
+  its own once the block was lifted (**2 → 2** failed before/after unblocking, then **0** after the
+  app's own `reviveImgs()`), so the retry/back-off already recovers without a fix. **The `✅ Already
+  up to date` toast after a failed refresh** — `fetchFresh()` swallows both API errors and returns an
+  empty list, so a failed refresh reports "already up to date" instead of "⚠️ Could not reach
+  Wikimedia"; that is wrong-but-cosmetic and fixing it changes wording, so it was left alone.
+  **Robustness sweep** — 40 random UI actions (cards, tabs, fullscreen, arrows, popover switches,
+  credits, chips, sources, search submits, Escape, ArrowRight, refresh, F) in one session: **0**
+  exceptions, **0** unhandled rejections, **0** 429, heap **9.5 MB**; every `$('…')` id in the script
+  exists in the markup (the only one built at runtime is `#fsFit`), no duplicate ids, and all 168 `en`
+  keys plus the 17 `data-i18n` attributes resolve (the category keys missing from some languages are
+  the intended `catTitle()` fallback). **390×844** — three columns, no horizontal overflow, three
+  pull-to-refreshes in a row (All → ✨ 40 added → All → 🆕 Naye → 40 cards) with **0** errors.
+  **The Android shell** — `MainActivity` reviewed: the back-button sheet ordering, the wallpaper
+  bridge's async `__wallResult`, the asset interception and the 120 Hz request are all sound.
+
 ## v5.4.0 — 2026-11-13
 **A refreshed wallpaper came back twice in the newest-uploads feed, and the Android "set wallpaper"
 button stayed greyed out after it had worked**
