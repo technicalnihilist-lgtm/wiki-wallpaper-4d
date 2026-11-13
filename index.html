@@ -721,6 +721,16 @@ const allNorm=()=>ALLNORM||(ALLNORM=WALLS.map(norm));
 
 /* ---- live Commons fallback: jab embedded list khatam ho jaye ---- */
 let lastApiAt=0,apiFails=0,apiCooldown=0;
+/* Every request below is a fetch() with no deadline, and the caller's AbortController is only
+   aborted when the *view* changes. A connection that stalls after the TCP handshake (a phone
+   that walked out of Wi-Fi range, a captive portal that accepts and then says nothing) leaves the
+   promise pending for ever: `loading` / `refreshing` never clear, the pull indicator stays on
+   screen reading "Fetching the latest wallpapers…", the refresh button keeps its busy ring, and
+   every later Refresh press returns at once because `refreshing` is still true. Each attempt now
+   carries a 20 s deadline that aborts the request — headers *and* body, since fetch() resolves at
+   the headers — and is reported as a temporary failure (err.rateLimited), which is the path that
+   already clears the status pill without ending the feed. */
+const API_TIMEOUT=20000;
 async function api(params,signal){
   const now=Date.now();
   if(now<apiCooldown){const e=new Error('cooldown');e.rateLimited=true;throw e}
@@ -730,8 +740,15 @@ async function api(params,signal){
   const u=API+'?'+new URLSearchParams({format:'json',formatversion:'2',origin:'*',...params});
   let limited=false;
   for(let i=0;i<3;i++){
+    /* one controller per attempt: the caller's abort still cancels at once, the deadline aborts
+       only this attempt and is reported separately */
+    const ac=('AbortController' in window)?new AbortController():null;
+    let stalled=false,to=0;
+    const relay=()=>{try{if(ac)ac.abort()}catch(e){}};
+    if(ac&&signal){if(signal.aborted)relay();else signal.addEventListener('abort',relay,{once:true})}
+    if(ac)to=setTimeout(()=>{to=0;stalled=true;relay()},API_TIMEOUT);
     try{
-      const r=await fetch(u,{signal});
+      const r=await fetch(u,{signal:ac?ac.signal:signal});
       if(r.status===429||r.status>=500){
         limited=true;
         if(r.status===429)apiCooldown=Date.now()+12000;
@@ -742,8 +759,16 @@ async function api(params,signal){
       apiFails=0;apiCooldown=0;
       return j;
     }catch(e){
+      if(stalled){
+        /* nothing came back in time: a temporary failure, so it must not end the feed */
+        apiCooldown=Date.now()+15000;
+        const err=new Error('timeout');err.rateLimited=true;throw err;
+      }
       if(e.name==='AbortError'||i===2)throw e;
       await sleep(600);
+    }finally{
+      if(to)clearTimeout(to);
+      if(ac&&signal)signal.removeEventListener('abort',relay);
     }
   }
   apiFails++;
