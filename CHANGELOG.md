@@ -3,6 +3,69 @@
 Every change below keeps the UI, layout, wording and features exactly as they are.
 Only correctness, stability and speed change.
 
+## v5.4.2 — 2026-11-15
+**A download that stalled after the headers left its button dead for the rest of the session — and a
+transfer in flight painted its percentage into the next wallpaper's button**
+
+- **⬇ Original / ⬇ HD never gave the button back when the transfer stopped moving.** `fetchBlob()` was
+  the one network path in the app with no deadline of its own (`api()` has had a 20 s one since
+  v5.4.1, `getJSON()` a 9 s one since the multi-source engine): `download()` disables the button and
+  writes **"Preparing…" / "Downloading…"** into its label, then awaits that `fetch()`, and re-enables
+  the button only in its `finally`. A connection that accepts and then says nothing — walked out of
+  Wi-Fi range, a captive portal, a proxy that swallows the body — leaves the promise pending for ever,
+  so the `finally` never runs. The two download buttons are fixed nodes that survive the wallpaper
+  window, so the dead state outlived the card: the button stayed greyed out with **"Downloading…"** on
+  it, no toast, no retry, and reopening another wallpaper did not clear it either.
+  Measured in headless Chromium against the live CDN, with `upload.wikimedia.org` rewritten to accept
+  and never answer: **click ⬇ Original → sampled at 1 s / 3 s / 6 s / 12 s / 20 s / 30 s / 45 s —
+  `disabled` true and the label "Downloading…" at every sample, toast never shown**; after closing the
+  window and opening another wallpaper **`disabled` was still true** (only the label had been rewritten
+  to the new resolution). After the fix the same stall clears at **20.6 s** — button enabled, label back
+  to "⬇ Original · 2500×1625", the existing **"Download was blocked. Open the image and…"** toast with
+  its Open ↗ link, **0** console errors — and a real ⬇ HD download on the same build still writes its
+  file ("✅ Downloaded — don't forget the credit!") with the label restored.
+  Each transfer now carries an idle deadline that **every chunk pushes back** (`DL_IDLE`, 20 s), armed
+  again when the headers arrive because `fetch()` resolves before the body is read, so a slow-but-moving
+  download is never cut off while a dead socket fails inside 20 s and lands in the existing
+  "blocked — Open ↗" path. No new wording, no new element, no new state.
+- **A download running on one wallpaper wrote its progress into the next wallpaper's button.** The
+  button and its `.lbl` are the same two nodes for every card, and the progress callback wrote straight
+  into them across the `await`, so a transfer started on card A kept overwriting the label that
+  `fillModal()` had just written for card B; when it finished, the `finally` restored **A's** label over
+  B's. Measured with the CDN throttled to 60 KB/s: ⬇ Original on a **2500×1625** wallpaper, close the
+  window, open a **3000×2400** one → its button read **"8%"**, then **"68%"**, instead of its own
+  resolution. Now the download only touches the button while `curData` is still the wallpaper it
+  started on: the same run shows **"⬇ Original · 3000×2400"** on open and on settle, and the button is
+  enabled again once A's transfer ends (verified with 200 KB/s: `disabled` false, label intact).
+- **Nothing visual changed.** The 2,548,730 bytes of HTML+CSS and embedded wallpaper data before the
+  single `<script>` block, and the 26 bytes after `</script>`, are **byte-identical** to v5.4.1; the
+  script diff is **7 lines removed, 34 added** (11 of them the comment explaining the deadline, 6 the
+  comment on the shared button). The whole normal-path suite was re-run on the built file and behaves
+  exactly as v5.4.1: open a card → Credit tab → ♡ Favourite (`ww_favs` written) → ⛶ Fullscreen → Fill
+  → › next → Exit → close, the settings popover, the credits sheet (80 rows, "ansel" → 2 rows), **0**
+  console errors, **0** unhandled rejections, **0** failed requests, **0** HTTP 429. Boot and scroll on
+  the same harness: boot **FCP 1.11 s**, dcl **1.40 s**, **222** cards, **45** images, **44** loaded,
+  **0** failed faces, **13** long tasks (1.74 s); 12-step scroll **528** cards, **157** images, **0**
+  failed faces, **42** long tasks (6.00 s) — against **FCP 0.91 s**, **240** cards, **12** long tasks
+  (1.65 s) and **456** cards, **165** images, **40** long tasks (5.60 s) for v5.4.1 on the same harness,
+  i.e. live-CDN variance, not this change. 50 random UI actions: **0** exceptions, **0** rejections,
+  heap **12.1 MB**, **2,909** DOM nodes, both download buttons enabled afterwards. **390×844**: three
+  columns, **70** cards, no horizontal overflow, **0** errors.
+- Checked and found already fine, so not touched: **the API and multi-source deadlines** — `api()`'s
+  20 s per-attempt controller (v5.4.1) and `getJSON()`'s 9 s abort both fire and recover, so downloads
+  were the only remaining unguarded `fetch()`. **Image recovery after a network blip** — thumbnail host
+  blocked for 2 s and again for 8 s while scrolling: cards queue and back off (3 slots, 200 ms gap),
+  and after `online` the loader drains to **139** loaded of 222 cards and then **289** of 564 on
+  further scrolling, **0** faces stuck in `.failed`; no loader slot is lost. **`retryImg`'s re-queue** —
+  the same image can be queued twice (a pending retry timer plus `reviveImgs()`), which would leak an
+  `imgActive` slot per duplicate, but no run could make the loader stall after either blip (all six
+  slots still delivering), so it was left alone rather than "fixed" on a guess. **The Android shell** —
+  `MainActivity` reviewed again: the back-button sheet ordering (language → credits → popover →
+  window), the wallpaper bridge's async `__wallResult`, the 15 s connect / 30 s read timeouts on its own
+  download, the asset interception and the 120 Hz request are all sound. **The credits, language and
+  popover sheets** — Escape closes exactly one layer, the pull-to-refresh guard covers all three, and a
+  language switch still restores the open tab.
+
 ## v5.4.1 — 2026-11-14
 **A connection that stalled instead of failing froze the app: the pull indicator, the refresh ring and
 every later Refresh press stayed dead for ever**
