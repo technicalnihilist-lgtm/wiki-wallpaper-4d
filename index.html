@@ -2019,22 +2019,51 @@ async function bigUrl(d,w){
   const key=d.id+'@'+w;if(hdCache.has(key))return hdCache.get(key);
   const url=resize(d.thumb,w);hdCache.set(key,url);return url;
 }
+/* The one network path that still had no deadline. `download()` disables its button and writes
+   "Preparing…" / "Downloading…" into its label before it awaits this fetch, and re-enables the
+   button in its `finally` — but a connection that stops answering after the headers (walked out
+   of Wi-Fi range, a captive portal that accepts and then says nothing, a proxy that swallows the
+   body) leaves the promise pending for ever, so that `finally` never runs: the button stays
+   disabled with "Downloading…" on it. The two download buttons are fixed nodes that survive the
+   window, so the state outlived the wallpaper too — closing the window and opening another one
+   left both buttons greyed out for the rest of the session, with no toast and no way to retry.
+   Each transfer now carries an idle deadline that every chunk pushes back, so a slow-but-moving
+   download is never cut off while a dead socket fails within 20 s and lands in the existing
+   "download blocked — Open ↗" path (no new wording, no new UI). */
+const DL_IDLE=20000;
 async function fetchBlob(url,onProg,known){
-  const r=await fetch(url);if(!r.ok)throw new Error('HTTP '+r.status);
-  const len=+r.headers.get('content-length')||known||0;
-  if(!r.body||!len)return await r.blob();
-  const rd=r.body.getReader(),chunks=[];let got=0;
-  for(;;){const{done,value}=await rd.read();if(done)break;chunks.push(value);got+=value.length;onProg(Math.min(1,got/len))}
-  return new Blob(chunks,{type:r.headers.get('content-type')||'image/jpeg'});
+  const ac=('AbortController' in window)?new AbortController():null;
+  let to=0,stalled=false;
+  const arm=()=>{if(!ac)return;clearTimeout(to);to=setTimeout(()=>{to=0;stalled=true;try{ac.abort()}catch(e){}},DL_IDLE)};
+  arm();
+  try{
+    const r=await fetch(url,ac?{signal:ac.signal}:undefined);if(!r.ok)throw new Error('HTTP '+r.status);
+    arm();   /* the headers arrived: the body gets its own deadline */
+    const len=+r.headers.get('content-length')||known||0;
+    if(!r.body||!len)return await r.blob();
+    const rd=r.body.getReader(),chunks=[];let got=0;
+    for(;;){const{done,value}=await rd.read();if(done)break;arm();chunks.push(value);got+=value.length;onProg(Math.min(1,got/len))}
+    return new Blob(chunks,{type:r.headers.get('content-type')||'image/jpeg'});
+  }catch(e){
+    if(stalled)throw new Error('timeout');
+    throw e;
+  }finally{if(to)clearTimeout(to)}
 }
 const EXT={'image/jpeg':'jpg','image/png':'png','image/webp':'webp','image/gif':'gif','image/tiff':'tif'};
 async function download(getUrl,btn,suffix,known){
   if(btn.disabled||!curData)return;
   const d=curData,lbl=btn.querySelector('.lbl'),old=lbl.textContent;
+  /* The two download buttons are fixed nodes that belong to whichever wallpaper the window is
+     showing, but a transfer outlives the window: `await` between the click and the write meant a
+     download started on one wallpaper kept painting its percentage into the *next* wallpaper's
+     button (open a card, start ⬇ Original, close, open another → its button read "8%" and then
+     "68%" instead of its own resolution), and the `finally` restored the old wallpaper's text on
+     top of the new one. Only the download whose wallpaper is still on screen may touch the button. */
+  const mine=()=>curData===d;
   btn.disabled=true;lbl.textContent='Preparing…';let url=null;
   try{
-    url=await getUrl();lbl.textContent='Downloading…';
-    const blob=await fetchBlob(url,p=>{btn.style.setProperty('--p',p.toFixed(3));lbl.textContent=Math.round(p*100)+'%'},known);
+    url=await getUrl();if(mine())lbl.textContent='Downloading…';
+    const blob=await fetchBlob(url,p=>{if(!mine())return;btn.style.setProperty('--p',p.toFixed(3));lbl.textContent=Math.round(p*100)+'%'},known);
     if(!blob.size)throw new Error('empty');
     const name=(d.title.replace(/[^\w\- ]+/g,'').trim().replace(/\s+/g,'_').slice(0,60)||'wallpaper')+suffix+'.'+(EXT[blob.type]||'jpg');
     const a=el('a',{href:URL.createObjectURL(blob),download:name});
@@ -2042,7 +2071,7 @@ async function download(getUrl,btn,suffix,known){
     toast(t('t_dl'));
   }catch(e){
     toast(t('t_dlblock'),{href:url||d.original,label:'Open ↗'});
-  }finally{btn.disabled=false;lbl.textContent=old;btn.style.setProperty('--p',0)}
+  }finally{btn.disabled=false;if(mine())lbl.textContent=old;btn.style.setProperty('--p',0)}
 }
 $('dlHD').addEventListener('click',e=>download(()=>bigUrl(curData,1920),e.currentTarget,'_HD',0));
 $('dlOrig').addEventListener('click',e=>download(()=>Promise.resolve(curData.original),e.currentTarget,'_original',(curData&&curData.size)||0));
