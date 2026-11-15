@@ -3,6 +3,88 @@
 Every change below keeps the UI, layout, wording and features exactly as they are.
 Only correctness, stability and speed change.
 
+## v5.4.3 — 2026-11-16
+**The language you picked was only half there when you came back: the gallery was in Hindi, the search
+box, the three tabs and the whole credits sheet were still in English**
+
+- **A saved language never reached the markup.** `LANG` is restored from `ww_lang` at module level, so
+  every string the script builds comes up in the user's language — the meta line, the status pills, the
+  chips, the wallpaper window's field labels and its two download buttons. The thirteen `data-i18n` /
+  `data-i18n-ph` nodes in the markup are only ever rewritten by `applyLang()`, and `applyLang()` was
+  called from `setLang()` alone — i.e. only when the user *changes* language. `setLang()` also persists
+  the choice, so the very act of switching translated the markup for that session and the next cold
+  start threw it away again. A returning Hindi user got a Hindi gallery, Hindi chips, Hindi Info rows
+  and Hindi download labels, with the search placeholder, the pull hint, **Info / Credit / Set
+  wallpaper**, **⛶ Fullscreen**, **🌐 Language**, and the credits sheet's **📜 Credits**, **Show more**,
+  **📋 Copy all credits** and **⬇ Credits .txt** all still in English, until they opened the language
+  sheet and picked the language they had already picked.
+  Measured in headless Chromium against the live CDN, with `ww_lang='hi'` seeded and the page loaded
+  cold: **13 of 13** `data-i18n` nodes English — `#q` placeholder *"Search: mountain, sunset, galaxy,
+  photographer…"*, `#ptext` *"Pull down for the latest wallpapers"*, tabs *["Info","Credit","Set
+  wallpaper"]*, *"⛶ Fullscreen"*, *"🌐 Language"*, *"📜 Credits"*, *"Show more"*, *"📋 Copy all
+  credits"*, *"⬇ Credits .txt"* — while the same page's meta line read *"6,288 वॉलपेपर·○ ऑफलाइन·सभी
+  Wikimedia Com…"*, its first chip *"सभी"*, its more button *"6,084 और वॉलपेपर ↓"*, and an opened
+  wallpaper showed tabs in English over Info rows *"फोटोग्राफर / आर्टिस्ट"*, *"रिज़ॉल्यूशन"*,
+  *"कैटेगरी"* and buttons *"⬇ HD डाउनलोड करें · 1920px"* / *"⬇ ओरिजिनल · 2240×1680"*. After the fix the
+  same cold start gives **13 of 13** translated — placeholder *"खोजें: पहाड़, सूर्यास्त, गैलेक्सी,
+  फोटोग्राफर…"*, pull hint *"ताज़ा वॉलपेपर के लिए नीचे खींचें"*, tabs *["जानकारी","क्रेडिट","वॉलपेपर
+  सेट करें"]*, credits sheet *"📜 क्रेडिट"* / *"और दिखाएं"* / *"📋 सभी क्रेडिट कॉपी करें"* / *"⬇ क्रेडिट
+  .txt"* — with **0** console errors and **0** unhandled rejections.
+  The boot now runs `applyLang()` instead of the bare `buildPop();buildSrcChips();` **when the saved
+  language is not English** (`applyLang()` builds the chip row and the settings sheet itself, so nothing
+  is built twice), and keeps the old two calls for English, where they are a no-op. Nothing else changed:
+  the same Hindi cold start builds the full 42-button chip row with its lens at 48 px, the settings sheet
+  with 37 rows and its five segment lenses at 75/99/99/99/99 px, a switch that still toggles
+  true→false→true, and the credits sheet with 80 rows and *"6,288 इमेज · 2,283 फोटोग्राफर / क्रिएटर…"*;
+  switching back to English in-session still restores the English markup.
+- **Nothing visual changed.** The 2,548,730 bytes of HTML+CSS and embedded wallpaper data before the
+  single `<script>` block, and the 26 bytes after `</script>`, are **byte-identical** to v5.4.2; the
+  script diff is **1 line removed, 13 added** (10 of them the comment explaining why). English is
+  untouched by construction — the same cold-start dump on both builds is identical, including
+  `#openCredits` staying *"📜 Credits"*, the only difference being the *"N more wallpapers"* count,
+  which is the number of chunks the sentinel had filled at sample time (**6,012 / 6,048 / 6,120** across
+  three runs of the same build). Boot cost is unchanged: FCP **0.888 → 0.900 s** (en) and **0.896 →
+  0.888 s** (hi), dcl **1.41 → 1.53 s** / **1.50 → 1.51 s**, boot long tasks **16 → 14** / **14 → 18**,
+  12-step scroll long tasks **36 → 28** / **32 → 41** — live-CDN variance. The whole normal-path suite
+  was re-run on the built file and behaves exactly as v5.4.2: open a card → Credit tab → ♡ Favourite
+  (`ww_favs` written) → ⛶ Fullscreen → › next → Exit → close, the settings popover, the credits sheet
+  (80 rows, "ansel" → 2 rows), the language sheet (Deutsch → the open Credit tab is preserved → English),
+  search → category chip → All → six rapid chip switches, Escape, with **0** console errors, **0**
+  unhandled rejections, **0** failed requests, **0** HTTP 429. Boot on the same harness: FCP **0.81 s**,
+  dcl **1.50 s**, **186** cards, **40** images loaded, **0** failed faces, **17** long tasks (2.26 s);
+  12-step scroll **852** cards, **130** loaded, **0** failed faces, **41** long tasks (6.79 s). **390×844**
+  with touch: three columns, **34** cards, no horizontal overflow, a 120 px pull-to-refresh runs
+  *"Release to refresh!"* → *"Fetching the latest wallpapers…"* → indicator and busy ring cleared, grid
+  34 → 50 cards, **0** errors.
+- Checked and found already fine, so not touched: **grid cell retention across category switches** —
+  `start()` disconnects the reveal `IntersectionObserver` but not the 800 px `nearIO` one, which looked
+  like unbounded growth; measured with CDP `Memory.getDOMCounters` over **24** category switches,
+  DOM nodes went **5,775 → 3,848** and the JS heap **7.48 → 6.81 MB**, so Chromium keeps no strong
+  reference to removed targets and there is nothing to release. **The loader after a CDN blip** — the
+  suspected double-queue (`retryImg`'s timer plus `reviveImgs()`) was instrumented at the source level by
+  wrapping the `HTMLImageElement.src` setter and counting repeated assignments to the same element:
+  **0** duplicates over a 6 s thumbnail blackout, 14 scroll steps and an `online` revive, and the queue
+  drained on its own afterwards (**217** loaded, **0** failed of 960 touched cards), confirming v5.4.2's
+  reasoning. **The multi-source views** — NASA (6 cards), Internet Archive (14 → 27 on "more"), and the
+  item modal's credit block, all correct; Openverse, Cleveland, Art Institute, Library of Congress and
+  the Met drop out of the chip row here only because this container's egress proxy answers their hosts
+  without CORS headers, which is the app's intended "source returns no images" path, not a fault.
+  **Offline boot** — with every Wikimedia host blocked the grid still renders **132** cards from the
+  embedded data, **0** faces reach the failed state, and unblocking + `online` fills **79 → 126** loaded.
+  **Persisted settings** — a cold start with `orient:portrait, minres:3000, size:l, anim:genie,
+  depth:200, blur:60, speed:200, theme:dark, lite, no caps/creds/bgfx` and a Tamil locale boots with
+  **24** cards, no horizontal overflow, the wallpaper window opening and closing on Escape, **0** errors.
+  **The window chrome** — the green button grows the window **1000×720 → 1440×900** and back, ⛶ Fullscreen
+  with Fill/Fit, Escape and F all behave (an earlier reading of 150×108 was the open animation's
+  `scale()` still running in this container, confirmed by screenshot). **Downloads** — ⬇ HD writes its
+  file, the label returns to *"⬇ Download HD · 1920px"* and the button re-enables; opening another
+  wallpaper mid-transfer leaves its label and enabled state alone. **Boot CPU profile** — the top self-time
+  entries are `JSON.parse` of the 2.48 MB dataset, the first render and the grid's layout/paint; no app
+  function is a hotspot (`updateMoreBtn`'s 3.9 % is the one-off `Intl` locale load behind
+  `toLocaleString('en-IN')`). **The Android shell** — `MainActivity` reviewed again: the back-button sheet
+  ordering, the async `__wallResult` bridge, the 15 s connect / 30 s read timeouts and the asset
+  interception are sound.
+
 ## v5.4.2 — 2026-11-15
 **A download that stalled after the headers left its button dead for the rest of the session — and a
 transfer in flight painted its percentage into the next wallpaper's button**
