@@ -2670,7 +2670,19 @@ if(lw){
 if(S.gyro){if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function')S.gyro=false;else enableGyro(true)}
 window.__wallResult=m=>{try{toast(/^ok/i.test(String(m))?'✅ Wallpaper set':'⚠️ '+(m||'Could not set wallpaper'))}catch(e){}
   for(const b of wallWait){try{b.disabled=false}catch(e){}}wallWait=[];};
-apply();buildPop();buildSrcChips();
+apply();
+/* A saved language only ever reached half the interface. LANG is restored from localStorage at
+   module level, so every string the script builds (the meta line, the status pills, the chips,
+   the whole wallpaper window) came up in the user's language — but the thirteen `data-i18n`
+   nodes in the markup (the search placeholder, the pull hint, the Info / Credit / Set wallpaper
+   tabs, ⛶ Fullscreen, 🌐 Language, the credits sheet title and its three buttons) are only ever
+   rewritten by applyLang(), which used to be called from setLang() alone. A returning user
+   therefore saw a Hindi gallery whose search box, tabs and credits sheet were still in English
+   until they opened the language sheet and picked the same language again. applyLang() also
+   builds the chip row and the settings sheet, so it replaces the two calls below for those users;
+   English is left on exactly the old path, where it is a byte-for-byte no-op. */
+if(LANG==='en'){buildPop();buildSrcChips();}
+else applyLang();
 moveLens(chipsBox,true);
 if(document.fonts&&document.fonts.ready)document.fonts.ready.then(()=>moveLens(chipsBox,true));
 start(term);
