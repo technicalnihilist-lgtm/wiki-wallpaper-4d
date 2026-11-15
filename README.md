@@ -188,3 +188,17 @@ Full attribution for every image is in [`CREDITS.md`](CREDITS.md). Images are lo
 Wikimedia's servers, not re-hosted. If you repost a wallpaper, keep the credit line.
 
 Built with ❤️ for Wikipedia's photographers.
+
+---
+
+## ☕ Donate / Buy me a coffee
+
+**Coming soon** — our donation options are on the way.
+
+| Platform | Status |
+| --- | --- |
+| Paytm | Coming soon |
+| PayPal | Coming soon |
+| GPay (Google Pay) | Coming soon |
+
+If you like our work, you can support us with a donation. We are bringing this very soon — **coming soon**.
