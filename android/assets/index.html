@@ -394,6 +394,24 @@ html.lite .pbadge{animation:none}
   background:rgba(var(--ink-rgb),.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.3)}
 .langbtn .lgl{font-size:14px}
 </style>
+<script>
+/* The first frame used to be hard-coded dark. <html data-theme="dark"> and the dark theme-color
+   are static markup, and the theme the user actually wants is only applied by apply() at the very
+   end of the app script - after the 2.4 MB wallpaper list has been parsed and the first cards have
+   been built. A light-mode device (OS light, or theme:light saved) therefore painted a dark app
+   first and flipped to light ~2.2 s later, on every cold start, with the Android status bar dark
+   for the same time. This restores the exact decision apply() makes, before the first frame;
+   apply() still runs and writes the identical value. It also puts the saved language back on
+   <html> so the document is not announced as Hindi for that window. */
+(function(){try{
+  var s=JSON.parse(localStorage.getItem('ww_s3')||'{}')||{};
+  var th=s.theme||'auto';
+  var dark=th==='dark'||(th==='auto'&&window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.dataset.theme=dark?'dark':'light';
+  var m=document.querySelector('meta[name=theme-color]');if(m)m.content=dark?'#0b0d12':'#e8ecf4';
+  var lg=localStorage.getItem('ww_lang');if(lg)document.documentElement.lang=lg;
+}catch(e){}})();
+</script>
 </head>
 <body>
 
@@ -2233,7 +2251,7 @@ const cdim=$('cdim'),cbox=$('credits');
 let credOpen=false,credSrc=[],credShown=0,credFilter='';
 function credRow(d){
   return el('div',{class:'crow'},
-    el('img',{src:d.thumb,alt:'',loading:'lazy',decoding:'async'}),
+    el('img',{src:resize(d.thumb,250),alt:'',loading:'lazy',decoding:'async'}),
     el('div',{class:'cbody'},
       el('a',{class:'cti',href:safeUrl(d.page),target:'_blank',rel:'noopener noreferrer'},d.title),
       el('div',{class:'cby'},t('by')+' ',el('b',{},d.artist)),
