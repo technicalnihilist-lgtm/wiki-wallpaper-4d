@@ -3,6 +3,63 @@
 Every change below keeps the UI, layout, wording and features exactly as they are.
 Only correctness, stability and speed change.
 
+## v5.4.4 — 2026-11-17
+**Every cold start on a light-mode device painted a dark app for 2.3 s before flipping to light — and
+the credits sheet downloaded 500 px photographs to draw 46 px squares**
+
+- **The theme of the first paint was hard-coded, not the user's.** `<html data-theme="dark">` and
+  `<meta name="theme-color" content="#0b0d12">` are static markup, and the theme the user actually
+  wants is only written by `apply()` — which runs at the very end of the app script, after the 2.4 MB
+  wallpaper list has been parsed and the first cards have been built. A device whose OS is light (or
+  whose saved `ww_s3` says `theme:'light'`) therefore painted a **dark** app, with a **dark Android
+  status bar**, and only became light seconds later. Measured in headless Chromium against the live
+  CDN, 1280×900, `prefers-color-scheme: light`, every composited frame captured through
+  `Page.startScreencast` and classified by mean luminance: **the first painted frame (866 ms) is
+  dark #0b0d12 and 15 consecutive frames stay dark — 866, 899, 1116, 1399, 1516, 1699, 1799, 1999,
+  2133, 2299, 2499, 2633, 2816, 3033, 3199 ms — before the script reaches `apply()` and the screen
+  turns light: 2.33 s of a dark screen on a light-mode device.** A 1.3 KB script in the `<head>` now
+  restores exactly the decision `apply()` makes — saved `theme`, otherwise `prefers-color-scheme` —
+  and the matching `theme-color`, before the first frame. Same capture after the fix: **0 dark
+  frames**, the first painted frame (935 ms) is already light #e8ecf4. `apply()` still runs and writes
+  the identical value; nothing about the light or dark palette changed.
+- **The saved language was missing from `<html>` for the same window.** The document shipped as
+  `lang="hi"` for everyone, so an English (or Japanese, or Tamil) reader's page was announced as Hindi
+  — to a screen reader, and to the font/line-breaking heuristics that read `lang` — until the script
+  ran. The same pre-paint script puts `ww_lang` back on `<html>`; `document.documentElement.lang` was
+  already being set to that value later, so the end state is unchanged.
+- **The credits sheet pulled 500 px JPEGs for 46 px squares.** `.crow img` is 46×46 CSS px, but
+  `credRow()` used `d.thumb` — the 500 px thumbnail the grid uses — for every one of the 80 rows it
+  renders on open, and 120 more on every scroll to the bottom. Measured on a phone viewport
+  (390×844, DPR 3) against the live CDN, opening *📜 Credits* from the first screen: **33 thumbnail
+  requests, 1.95 MB, 60.3 KB average per thumbnail** before; **48 requests, 0.96 MB, 20.2 KB
+  average** after the row asks for the 250 px rendition (3× fewer bytes for the same picture, and the
+  full 80-row list drops from 1.95 MB to 0.96 MB). The 250 px source keeps the 46 px box oversampled
+  at any device pixel ratio up to 5; the 120 px rendition was also measured (**0.26 MB, 5.3 KB
+  average, 11×**) and rejected as unnecessary. `resize()` leaves non-Wikimedia thumbnails (Flickr,
+  IIIF, NASA) untouched — verified on all four URL shapes.
+- **Nothing visual changed.** The 46,797 bytes of markup before `<body>` are now 48,039: the only
+  difference is the pre-paint script itself, which reproduces the state `apply()` and the language
+  restore already produce — a cold-start dump of `data-theme`, `meta[theme-color]`,
+  `document.documentElement.lang` and `body` background is **identical on both builds** in all four
+  combinations (light OS, dark OS, dark OS + saved light, dark OS + no setting), and the header
+  screenshot diff between the two builds (mean 0.93, 2,612 px >8) is *below* the run-to-run noise of
+  the same build measured twice (mean 1.04, 5,456 px >8), which is the animated backdrop. The
+  wallpaper data block and the app script are byte-identical apart from **one line** in `credRow()`;
+  the credits thumbnails were compared by rendering the same 24 photographs at 46 px / DPR 3 from
+  their 500 px and 250 px sources and diffing the two renders — the difference is JPEG resample noise
+  only (mean |Δ| 4.6/255, no structural change), confirmed by eye at 3× magnification.
+- **Also checked this run, already correct, nothing shipped:** 12-step scroll on the live CDN
+  (94 images, all `200`, no 429, no failed face); two full passes over every category chip at 180 ms
+  intervals (99 Wikimedia requests, all `200`, grid and status pill consistent, no stuck loader);
+  offline → scroll → online (cards that had failed re-queue, `online` clears the learned back-off);
+  open card → ◀▶ navigate → ⛶ Fullscreen → Escape → ⤢ expand → Credit tab → ♡ Favourite → close →
+  settings (37 rows, theme switch) → credits + search → language sheet → Hindi → English, with **zero
+  console errors, zero unhandled rejections and zero failed requests**. One thing was found and
+  deliberately *not* changed: at boot the sentinel chain fills 150 cards (5,256 px of grid) on a
+  900 px viewport because it trusts an IntersectionObserver flag that can be a whole task old — the
+  DOM cost is real (1,639 → 1,064 nodes with the experiment applied) but the fix moves when cards are
+  appended during a fast fling, which is a visible change, so it was left alone.
+
 ## v5.4.3 — 2026-11-16
 **The language you picked was only half there when you came back: the gallery was in Hindi, the search
 box, the three tabs and the whole credits sheet were still in English**
