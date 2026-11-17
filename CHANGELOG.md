@@ -3,6 +3,48 @@
 Every change below keeps the UI, layout, wording and features exactly as they are.
 Only correctness, stability and speed change.
 
+## v5.4.5 — 2026-11-18
+**A card that used up its three retries while `thumb.wikimedia.org` was rate-limiting stayed a
+broken placeholder for the rest of the session — the only revival was the `online` event, and a
+429 never takes the network offline**
+
+- **A thumbnail that gave up was never asked again.** `retryImg()` retries a failed thumbnail three
+  times and then adds `.failed` to the card, and nothing re-queues a card after that: the one path
+  that revives given-up cards is `reviveImgs()`, which is called from the `online` event only. That
+  is right for an outage — the phone really did lose the network — but a burst of **429s from
+  `thumb.wikimedia.org` never fires `online`**: the device is connected the whole time, it is the
+  CDN that is refusing. So every card that burned its retries during a rate-limit episode was dead
+  until the app was reloaded.
+
+  Reproduced in headless Chromium against the live CDN, 1280×900, with a service worker injecting
+  real 429 responses for every thumbnail request during the first 20 s of the session and then
+  serving normally (the shape of a Wikimedia burst limit). Original build: the first card exhausted
+  its three retries at **t=19 s** and the run ended at **t=40 s** with **69 of 70 cards loaded and
+  1 card still on the 🖼️ placeholder**, 71 successful thumbnail requests made after the CDN had
+  recovered — the stuck card was simply never asked again. Same run, this build: the card is
+  revived once the loader has seen **six consecutive clean loads** (the loader's own proof that the
+  CDN is answering again) — `failed` goes **1 → 0 at t=30 s**, the card loads normally, and the run
+  ends with **0 failed cards**. Each card is revived at most twice, so a genuinely dead thumbnail
+  cannot be retried for ever, and a card that was already given up on a previous recovery is not
+  queued a third time.
+
+- **No markup, geometry, wording or animation changed.** The diff is 4 hunks inside the image
+  loader (`imgOkRun`, `reviveFailed()`, two lines of `reviveImgs()` and one line of `img.onload`).
+  Verified by rendering both builds against the same blocked CDN, `anim:'off'`: the serialised card
+  list (aspect ratio, title and credit line of every rendered card, 17,747 bytes) is **byte
+  identical**, the header and meta line are **pixel identical**, and the screenshots differ only in
+  the frozen phase of the placeholder shimmer gradient.
+
+- **Checked and found already correct** (no change made): the 8 s rate-limit burst itself — the
+  loader backs off to 4 requests during the burst and recovers within 3 s of the CDN answering
+  again, which is the intent of the existing cooldown; a persistent 404 on every fifth thumbnail
+  (66 cards in **13 s** versus **8 s** healthy, no stuck cards); the 20 s and 12 s bursts' 429
+  handling in `api()`; the two IntersectionObservers' target lists — detached `.cell` counts do
+  climb to one previous grid while its thumbnails are still in flight, but fall back to **0 after
+  a forced GC** once the loader is idle, so nothing is retained; and scroll cost, which a CDP trace
+  attributes to paint (2.7 s) and multicol layout (1.9 s) of the grid rather than to script, i.e.
+  to the layout technique itself and not to anything fixable without changing it.
+
 ## v5.4.4 — 2026-11-17
 **Every cold start on a light-mode device painted a dark app for 2.3 s before flipping to light — and
 the credits sheet downloaded 500 px photographs to draw 46 px squares**
