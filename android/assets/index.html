@@ -824,7 +824,7 @@ function infoOf(p){
 
 /* ================= image loader (429-safe) ================= */
 let IMG_MAX=6, IMG_GAP=45;
-let imgActive=0,imgCooldown=0,imgFailStreak=0,imgOkStreak=0,imgTimer=0,imgLastStart=0;
+let imgActive=0,imgCooldown=0,imgFailStreak=0,imgOkStreak=0,imgOkRun=0,imgTimer=0,imgLastStart=0;
 const imgQ=[],imgQHi=[]; /* imgQHi: cards the user can actually see, served first, in DOM order */
 const imgLive=new Set(); /* images currently counted in imgActive */
 function enqueueImg(img,hi){if(hi)imgQHi.push(img);else imgQ.push(img);pumpImgs()}
@@ -872,8 +872,29 @@ function retryImg(img,face){
    one moment we know for certain the network is back, so the learned back-off is dropped there and
    the given-up cards of the visible band are queued again. No markup, geometry or wording changes:
    the same images simply arrive sooner. */
+/* A card that used up its three retries while the CDN was rate-limiting stayed on the failed
+   placeholder for the rest of the session. retryImg() gives up on it and nothing re-queues a card
+   after that; the only revival is the `online` event, and a burst of 429s never takes the network
+   offline — the phone is online the whole time, it is thumb.wikimedia.org that is refusing. So a
+   handful of cards per rate-limit episode were dead for good, and only a reload brought them back.
+   Six consecutive loads with no failure in between is proof the CDN is answering again, so the
+   cards that gave up get their retries back. Two rounds per card, so a genuinely dead thumbnail
+   cannot be retried for ever. */
+function reviveFailed(){
+  const faces=grid.querySelectorAll('.cell[data-ld] .face.failed');
+  if(!faces.length)return;
+  let n=0;
+  for(const face of faces){
+    const im=face.querySelector('img');if(!im)continue;
+    const rv=+(im.dataset.rv||0);
+    if(rv>=2)continue;
+    im.dataset.rv=String(rv+1);
+    face.classList.remove('failed');delete im.dataset.attempt;imgQHi.unshift(im);n++;
+  }
+  if(n)pumpImgs();
+}
 function reviveImgs(){
-  imgCooldown=0;imgFailStreak=0;imgOkStreak=0;IMG_MAX=6;IMG_GAP=45;
+  imgCooldown=0;imgFailStreak=0;imgOkStreak=0;imgOkRun=0;IMG_MAX=6;IMG_GAP=45;
   if(imgTimer){clearTimeout(imgTimer);imgTimer=0}
   for(const face of grid.querySelectorAll('.cell[data-ld] .face.failed')){
     const im=face.querySelector('img');if(!im)continue;
@@ -931,9 +952,10 @@ function makeCell(d){
   img.dataset.full=d.thumb;
   img.dataset.small=resize(d.thumb,250);
   img.onload=()=>{releaseImg(img);imgFailStreak=0;
+    if(++imgOkRun>=6){imgOkRun=0;reviveFailed()}   /* six clean loads: the CDN is answering again */
     if(IMG_MAX<6&&++imgOkStreak>12){imgOkStreak=0;IMG_MAX=Math.min(6,IMG_MAX+1);IMG_GAP=Math.max(45,IMG_GAP-40)}
     face.classList.add('loaded');face.classList.remove('failed');pumpImgs()};
-  img.onerror=()=>{releaseImg(img);retryImg(img,face);pumpImgs()};
+  img.onerror=()=>{releaseImg(img);imgOkRun=0;retryImg(img,face);pumpImgs()};
   face.append(img,el('div',{class:'glare'}));
   card.append(face,el('div',{class:'cap'},
     el('span',{class:'ct'},d.title),
