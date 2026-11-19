@@ -1,12 +1,12 @@
 <div align="center">
 
-<img src="assets/icon.png" width="96" height="96" alt="2,322 free Wikimedia Commons wallpapers with full credits icon">
+<img src="assets/icon.png" width="96" height="96" alt="Wiki Wallpapers 4D icon">
 
-<img src="assets/banner.svg" alt="2,322 free Wikimedia Commons wallpapers with full credits — liquid glass 4D UI, live updates…">
+<img src="assets/banner.svg" alt="Wiki Wallpapers 4D">
 
 <a href="https://github.com/technicalnihilist-lgtm/wiki-wallpaper-4d/stargazers"><img src="https://img.shields.io/badge/stars-0-5A31F4?style=for-the-badge&logo=github&logoColor=white" alt="stars: 0"></a>&nbsp;<a href="https://github.com/technicalnihilist-lgtm/wiki-wallpaper-4d/network/members"><img src="https://img.shields.io/badge/forks-0-3FB950?style=for-the-badge" alt="forks: 0"></a>
 
-<a href="https://github.com/technicalnihilist-lgtm/wiki-wallpaper-4d/releases/latest"><img src="https://img.shields.io/badge/DOWNLOAD-APK-6D5AE6?style=for-the-badge&logo=android&logoColor=white" alt="Download APK"></a>
+<a href="https://github.com/technicalnihilist-lgtm/wiki-wallpaper-4d/releases/latest/download/wiki-wallpapers-4d-v5.4.5.apk"><img src="https://img.shields.io/badge/DOWNLOAD-APK-6D5AE6?style=for-the-badge&logo=android&logoColor=white" alt="Download APK"></a> <a href="https://technicalnihilist-lgtm.github.io/apps-site/apps/wiki-wallpaper-4d.html"><img src="https://img.shields.io/badge/WEBSITE-OPEN-3B82F6?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Website"></a>
 
 <b>Support the work</b>
 
