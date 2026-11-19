@@ -1,10 +1,10 @@
 <div align="center">
 
+<img src="assets/icon.png" width="96" height="96" alt="2,322 free Wikimedia Commons wallpapers with full credits icon">
+
+<img src="assets/banner.svg" alt="2,322 free Wikimedia Commons wallpapers with full credits — liquid glass 4D UI, live updates…">
+
 <a href="https://github.com/technicalnihilist-lgtm/wiki-wallpaper-4d/stargazers"><img src="https://img.shields.io/badge/stars-0-5A31F4?style=for-the-badge&logo=github&logoColor=white" alt="stars: 0"></a>&nbsp;<a href="https://github.com/technicalnihilist-lgtm/wiki-wallpaper-4d/network/members"><img src="https://img.shields.io/badge/forks-0-3FB950?style=for-the-badge" alt="forks: 0"></a>
-
-<h3>2,322 free Wikimedia Commons wallpapers with full credits — liquid glass 4D UI, live updates…</h3>
-
-<img src="https://img.shields.io/badge/HTML-5865F2?style=flat-square" alt="HTML"> <img src="https://img.shields.io/badge/Zero%20trackers-3B3F4A?style=flat-square" alt="Zero trackers"> <img src="https://img.shields.io/badge/Open%20source-3FB950?style=flat-square" alt="Open source">
 
 <a href="https://github.com/technicalnihilist-lgtm/wiki-wallpaper-4d/releases/latest"><img src="https://img.shields.io/badge/DOWNLOAD-APK-6D5AE6?style=for-the-badge&logo=android&logoColor=white" alt="Download APK"></a>
 
@@ -16,13 +16,7 @@
 
 <a href="https://github.com/technicalnihilist-lgtm/wiki-wallpaper-4d/releases/latest"><img src="https://img.shields.io/badge/VERSION-v5.4.5-6D5AE6?style=for-the-badge" alt="VERSION: v5.4.5"></a> <img src="https://img.shields.io/badge/DOWNLOADS-605-3FB950?style=for-the-badge" alt="DOWNLOADS: 605"> <a href="https://github.com/technicalnihilist-lgtm/wiki-wallpaper-4d/releases"><img src="https://img.shields.io/badge/RELEASES-GITHUB-EC4899?style=for-the-badge&logo=github&logoColor=white" alt="RELEASES: GITHUB"></a>
 
-<h4>Get it from</h4>
-
-<a href="https://github.com/technicalnihilist-lgtm/wiki-wallpaper-4d/releases"><img src="https://img.shields.io/badge/GitHub-Releases-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub Releases"></a> <a href="https://github.com/technicalnihilist-lgtm/wiki-wallpaper-4d/archive/refs/heads/main.zip"><img src="https://img.shields.io/badge/Source-ZIP-0EA5E9?style=for-the-badge&logo=github&logoColor=white" alt="Source ZIP"></a>
-
 </div>
-
----
 
 ---
 
